@@ -13,7 +13,7 @@ import {
 import { eq, and, desc } from "drizzle-orm";
 import { z } from "zod";
 import { openai } from "@workspace/integrations-openai-ai-server";
-import { indexProjectDocument, semanticSearch, embedTexts } from "./indexer";
+import { indexProjectDocument, keywordSearch } from "./indexer";
 
 const router: IRouter = Router();
 
@@ -334,20 +334,18 @@ router.post("/:id/chat", async (req, res) => {
       return;
     }
 
-    const [questionEmbedding] = await embedTexts([question]);
-    const relevantChunks = await semanticSearch(projectId, questionEmbedding!, 10);
-
-    const MIN_SCORE = 0.25;
-    const usedChunks = relevantChunks.filter((c) => c.score >= MIN_SCORE);
+    const relevantChunks = await keywordSearch(projectId, question, 10);
 
     await db.insert(projectChatsTable).values({ projectId, role: "user", content: question, sources: [] });
 
-    if (usedChunks.length === 0) {
-      const reply = "I could not find relevant information in the project documents to answer that question. The documents may not contain this information, or it may be phrased differently than what was extracted.";
+    if (relevantChunks.length === 0) {
+      const reply = "I could not find relevant information in the project documents to answer that question. The documents may not contain this information, or the terms used may differ from what was extracted.";
       const [msg] = await db.insert(projectChatsTable).values({ projectId, role: "assistant", content: reply, sources: [] }).returning();
       res.json({ message: msg, sources: [] });
       return;
     }
+
+    const usedChunks = relevantChunks;
 
     const contextBlock = usedChunks
       .map((c, i) => `[Source ${i + 1}: ${c.documentName}${c.sectionLabel ? " / " + c.sectionLabel : ""}]\n${c.content}`)
