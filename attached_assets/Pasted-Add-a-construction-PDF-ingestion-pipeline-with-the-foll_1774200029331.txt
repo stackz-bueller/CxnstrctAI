@@ -1,0 +1,144 @@
+Add a construction PDF ingestion pipeline with the following exact method. 
+This is for extracting raw content from construction document PDFs using 
+OCR and AI Vision — no analysis, just extraction.
+
+---
+
+PIPELINE OVERVIEW:
+PDF file → convert pages to images → preprocess with OpenCV → 
+run Tesseract OCR on targeted regions → send page images to GPT-4o Vision → 
+return structured extracted data
+
+---
+
+STEP 1 — CONVERT PDF PAGES TO IMAGES
+Use pdf2image to convert each PDF page to a high-resolution image:
+- DPI: 300 (for OCR accuracy on small text)
+- Format: JPEG or PNG
+- Process up to 15 pages maximum per document
+- Store each page as a PIL Image object for downstream processing
+
+---
+
+STEP 2 — PREPROCESS EACH PAGE IMAGE FOR OCR
+Using OpenCV on each page image before running Tesseract:
+1. Convert to grayscale (cv2.cvtColor → COLOR_RGB2BGR then COLOR_BGR2GRAY)
+2. Apply adaptive thresholding to clean noise and improve contrast
+3. Pass the cleaned numpy array to Tesseract
+
+OCR config to use:
+  pytesseract.image_to_string(image, config='--psm 6')
+  pytesseract.image_to_data(image, output_type=Output.DICT) for confidence scores
+
+---
+
+STEP 3 — EXTRACT FROM TARGETED REGIONS (not full page OCR)
+Crop and OCR these specific regions of each page:
+
+TITLE BLOCK — project name, sheet number, date, revision, drawn by, scale
+  Region 1 (primary):   x: 60% to 100%, y: 85% to 100%  (bottom-right corner)
+  Region 2 (fallback):  x: 0% to 100%,  y: 90% to 100%  (bottom strip)
+
+REVISION BLOCK — revision number, date, description of change
+  Region 1 (primary):   x: 70% to 100%, y: 0% to 20%    (upper-right corner)
+  Region 2 (fallback):  x: 60% to 100%, y: 75% to 85%   (near title block)
+
+LEGENDS — symbol tables, abbreviation lists, material keys
+  Detect bordered rectangular text boxes that are:
+  - Wider than 50px, narrower than 30% of page width
+  - Taller than 50px, shorter than 40% of page height
+  Run OCR on each candidate and keep ones that look like a symbol/key table
+
+CALLOUTS — detail references, section cuts, annotations, general notes
+  Detect small text regions:
+  - Width between 20px and 300px
+  - Height between 10px and 100px
+  Process up to 50 candidates per page
+  Keep text that matches patterns like "DETAIL A", "SECTION B-B", "SEE NOTE X", 
+  "TYP.", grid references, or circled numbers
+
+---
+
+STEP 4 — IMAGE TILING FOR COMPLEX DRAWINGS
+For large or complex drawing sheets, tile the full page image into a 3x3 grid 
+with 10% overlap between tiles so no area is missed:
+
+  Grid: 3 rows × 3 cols = 9 tiles
+  Overlap: 10% on each shared edge
+  Tile names: top-left, top-center, top-right,
+              middle-left, center, middle-right,
+              bottom-left, bottom-center, bottom-right
+
+Send each tile separately to GPT-4o Vision.
+Merge results, removing duplicates from overlapping regions.
+
+---
+
+STEP 5 — GPT-4o VISION ANALYSIS
+After OCR, send each page image (or tile) to GPT-4o Vision with this prompt:
+
+  "You are a construction drawing analyst. Extract all readable text and 
+   structured data from this drawing image.
+
+   Return JSON with:
+   {
+     'title_block': {
+       'project_name': '',
+       'drawing_title': '',
+       'sheet_number': '',
+       'revision': '',
+       'date': '',
+       'drawn_by': '',
+       'scale': ''
+     },
+     'revision_history': [
+       { 'rev_number': '', 'date': '', 'description': '' }
+     ],
+     'general_notes': ['list of all note text found'],
+     'callouts': [
+       { 'text': '', 'type': 'detail_ref | section_cut | note | grid | annotation' }
+     ],
+     'legends': [
+       { 'symbol': '', 'description': '' }
+     ],
+     'all_text': 'full raw text visible on this image, in reading order'
+   }
+
+   Rules:
+   - Extract exactly what is visible — do not infer or guess
+   - If a field is not visible return null
+   - Include every note, callout, and label you can read
+   - Preserve abbreviations exactly as written"
+
+---
+
+STEP 6 — MERGE OCR AND VISION RESULTS
+Combine Tesseract OCR output and GPT-4o Vision output:
+- Vision output takes priority for title block and structured fields
+- OCR output fills in gaps where Vision confidence is low
+- Store a confidence score (0.0–1.0) for each extracted field
+- Flag any field where OCR and Vision results conflict
+
+---
+
+OUTPUT STRUCTURE PER PAGE:
+{
+  "page_number": 1,
+  "extraction_method": "ocr+vision",
+  "title_block": {
+    "project_name": "",
+    "drawing_title": "",
+    "sheet_number": "",
+    "revision": "",
+    "date": "",
+    "drawn_by": "",
+    "scale": "",
+    "confidence": 0.0
+  },
+  "revision_history": [],
+  "general_notes": [],
+  "callouts": [],
+  "legends": [],
+  "all_text": "",
+  "ocr_confidence": 0.0
+}

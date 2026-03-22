@@ -203,6 +203,82 @@ export const GetExtractionResponse = zod.object({
 });
 
 /**
+ * @summary List all construction PDF extractions
+ */
+export const ListPdfExtractionsResponse = zod.object({
+  extractions: zod.array(
+    zod.object({
+      id: zod.number(),
+      fileName: zod.string(),
+      status: zod.enum(["processing", "completed", "failed"]),
+      totalPages: zod.number(),
+      processedPages: zod.number(),
+      processingTimeMs: zod.number(),
+      errorMessage: zod.string().nullish(),
+      createdAt: zod.date(),
+      updatedAt: zod.date(),
+    }),
+  ),
+});
+
+/**
+ * @summary Get a construction PDF extraction
+ */
+export const GetPdfExtractionParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const GetPdfExtractionResponse = zod.object({
+  id: zod.number(),
+  fileName: zod.string(),
+  status: zod.enum(["processing", "completed", "failed"]),
+  totalPages: zod.number(),
+  processedPages: zod.number(),
+  processingTimeMs: zod.number(),
+  errorMessage: zod.string().nullish(),
+  pages: zod.array(
+    zod.object({
+      page_number: zod.number(),
+      extraction_method: zod.string(),
+      title_block: zod.object({
+        project_name: zod.string().nullish(),
+        drawing_title: zod.string().nullish(),
+        sheet_number: zod.string().nullish(),
+        revision: zod.string().nullish(),
+        date: zod.string().nullish(),
+        drawn_by: zod.string().nullish(),
+        scale: zod.string().nullish(),
+        confidence: zod.number(),
+      }),
+      revision_history: zod.array(
+        zod.object({
+          rev_number: zod.string().nullish(),
+          date: zod.string().nullish(),
+          description: zod.string().nullish(),
+        }),
+      ),
+      general_notes: zod.array(zod.string()),
+      callouts: zod.array(
+        zod.object({
+          text: zod.string(),
+          type: zod.string(),
+        }),
+      ),
+      legends: zod.array(
+        zod.object({
+          symbol: zod.string(),
+          description: zod.string(),
+        }),
+      ),
+      all_text: zod.string(),
+      ocr_confidence: zod.number(),
+    }),
+  ),
+  createdAt: zod.date(),
+  updatedAt: zod.date(),
+});
+
+/**
  * @summary Get raw OCR text for an extraction
  */
 export const GetExtractionRawTextParams = zod.object({

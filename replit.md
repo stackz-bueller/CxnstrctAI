@@ -15,7 +15,10 @@ pnpm workspace monorepo using TypeScript. Each package manages its own dependenc
 - **Validation**: Zod (`zod/v4`), `drizzle-zod`
 - **API codegen**: Orval (from OpenAPI spec)
 - **Build**: esbuild (ESM bundle)
-- **AI**: OpenAI via Replit AI Integrations (gpt-5.2 with vision)
+- **AI (general)**: OpenAI via Replit AI Integrations (gpt-5.2 with vision)
+- **AI (PDF pipeline)**: gpt-4o via the same integration
+- **Python runtime**: 3.11 (pdf2image, opencv-python-headless, pytesseract, openai, pillow, numpy)
+- **System deps**: Poppler (PDF→images), Tesseract 5.5.0 (OCR), libGL
 
 ## Structure
 
@@ -56,6 +59,21 @@ A schema-anchored document information extraction tool that prevents schema drif
 
 **Built-in schemas:** Receipt, Invoice, Construction Report
 
+### Construction PDF Pipeline
+
+A second dedicated pipeline for construction engineering documents (PDFs):
+
+1. **PDF → Images**: Convert each page to 300 DPI images using pdf2image/poppler
+2. **OpenCV Preprocessing**: Adaptive threshold to clean noise and sharpen text for Tesseract
+3. **Targeted OCR**: Regional Tesseract OCR on title block (bottom-right), revision block (upper-right), and full page
+4. **Legend/Callout Detection**: OpenCV contour detection to find bordered boxes and annotation patterns
+5. **3×3 Vision Tiling**: Each page split into 9 overlapping tiles, each sent to GPT-4o Vision for structured extraction
+6. **Merge**: OCR and vision results merged — vision takes priority, OCR fills gaps
+
+**Extracted fields per page:** Title block (project name, drawing title, sheet number, revision, date, drawn by, scale), revision history table, general notes, callouts, legends/symbols, full raw text.
+
+**Script:** `scripts/pdf_processor.py` — spawned as a child process by the Node.js route. Takes `<pdf_path> <ai_base_url> <ai_api_key>`, outputs JSON to stdout.
+
 ### API Endpoints
 
 - `GET /api/schemas` — list schemas
@@ -66,6 +84,9 @@ A schema-anchored document information extraction tool that prevents schema drif
 - `GET /api/extractions/:id` — get extraction result
 - `GET /api/extractions/:id/raw-text` — get raw OCR text
 - `POST /api/extractions/upload` — multipart upload (file + schemaId)
+- `GET /api/pdf-extractions` — list all construction PDF extractions
+- `GET /api/pdf-extractions/:id` — get full extraction with per-page results
+- `POST /api/pdf-extractions/upload` — upload a construction PDF (starts async pipeline, returns immediately)
 
 ## TypeScript & Composite Projects
 
@@ -93,12 +114,14 @@ Express 5 API server. Routes live in `src/routes/` and use `@workspace/api-zod` 
   - `src/routes/ocr/schemas.ts` — document schema CRUD
   - `src/routes/ocr/extractions.ts` — extraction upload and retrieval
   - `src/routes/ocr/extraction-pipeline.ts` — two-pass OCR+extraction AI logic
+  - `src/routes/ocr/pdf-extractions.ts` — construction PDF upload (spawns Python pipeline) + list/get
 - Depends on: `@workspace/db`, `@workspace/api-zod`, `@workspace/integrations-openai-ai-server`
 
 ### `artifacts/ocr-extractor` (`@workspace/ocr-extractor`)
 
 React + Vite frontend. Pages:
-- Extract Document — schema selection + drag-and-drop upload
+- Extract Document — schema selection + drag-and-drop upload (image files)
+- **Construction PDF** — drag-and-drop PDF upload, real-time polling, per-page expandable results (title block, revisions, notes, callouts, legends, full text)
 - Document Schemas — schema list and management
 - Schema New — field builder for new schemas
 - History — past extraction results
@@ -108,6 +131,7 @@ React + Vite frontend. Pages:
 
 - `document_schemas` table — schema definitions with JSONB fields
 - `extractions` table — extraction results with JSONB field values
+- `construction_extractions` table — per-PDF extraction records with JSONB pages array
 
 ### `lib/api-spec` (`@workspace/api-spec`)
 

@@ -7,6 +7,11 @@
  */
 
 export * from "./apiError";
+export * from "./constructionCallout";
+export * from "./constructionLegend";
+export * from "./constructionPageResult";
+export * from "./constructionRevision";
+export * from "./constructionTitleBlock";
 export * from "./createSchemaBody";
 export * from "./deleteSchema200";
 export * from "./documentSchema";
@@ -17,6 +22,11 @@ export * from "./getExtractionRawText200";
 export * from "./healthStatus";
 export * from "./listExtractions200";
 export * from "./listExtractionsParams";
+export * from "./listPdfExtractions200";
 export * from "./listSchemas200";
+export * from "./pdfExtractionDetail";
+export * from "./pdfExtractionDetailStatus";
+export * from "./pdfExtractionSummary";
+export * from "./pdfExtractionSummaryStatus";
 export * from "./schemaField";
 export * from "./schemaFieldType";

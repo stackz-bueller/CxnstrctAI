@@ -26,7 +26,9 @@ import type {
   HealthStatus,
   ListExtractions200,
   ListExtractionsParams,
+  ListPdfExtractions200,
   ListSchemas200,
+  PdfExtractionDetail,
 } from "./api.schemas";
 
 import { customFetch } from "../custom-fetch";
@@ -620,6 +622,168 @@ export function useGetExtraction<
   },
 ): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
   const queryOptions = getGetExtractionQueryOptions(id, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary List all construction PDF extractions
+ */
+export const getListPdfExtractionsUrl = () => {
+  return `/api/pdf-extractions`;
+};
+
+export const listPdfExtractions = async (
+  options?: RequestInit,
+): Promise<ListPdfExtractions200> => {
+  return customFetch<ListPdfExtractions200>(getListPdfExtractionsUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getListPdfExtractionsQueryKey = () => {
+  return [`/api/pdf-extractions`] as const;
+};
+
+export const getListPdfExtractionsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listPdfExtractions>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listPdfExtractions>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getListPdfExtractionsQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listPdfExtractions>>
+  > = ({ signal }) => listPdfExtractions({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listPdfExtractions>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListPdfExtractionsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listPdfExtractions>>
+>;
+export type ListPdfExtractionsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary List all construction PDF extractions
+ */
+
+export function useListPdfExtractions<
+  TData = Awaited<ReturnType<typeof listPdfExtractions>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listPdfExtractions>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListPdfExtractionsQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Get a construction PDF extraction
+ */
+export const getGetPdfExtractionUrl = (id: number) => {
+  return `/api/pdf-extractions/${id}`;
+};
+
+export const getPdfExtraction = async (
+  id: number,
+  options?: RequestInit,
+): Promise<PdfExtractionDetail> => {
+  return customFetch<PdfExtractionDetail>(getGetPdfExtractionUrl(id), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetPdfExtractionQueryKey = (id: number) => {
+  return [`/api/pdf-extractions/${id}`] as const;
+};
+
+export const getGetPdfExtractionQueryOptions = <
+  TData = Awaited<ReturnType<typeof getPdfExtraction>>,
+  TError = ErrorType<ApiError>,
+>(
+  id: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getPdfExtraction>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetPdfExtractionQueryKey(id);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getPdfExtraction>>
+  > = ({ signal }) => getPdfExtraction(id, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getPdfExtraction>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetPdfExtractionQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getPdfExtraction>>
+>;
+export type GetPdfExtractionQueryError = ErrorType<ApiError>;
+
+/**
+ * @summary Get a construction PDF extraction
+ */
+
+export function useGetPdfExtraction<
+  TData = Awaited<ReturnType<typeof getPdfExtraction>>,
+  TError = ErrorType<ApiError>,
+>(
+  id: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getPdfExtraction>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetPdfExtractionQueryOptions(id, options);
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;

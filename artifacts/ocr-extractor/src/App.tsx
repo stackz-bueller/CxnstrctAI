@@ -9,6 +9,7 @@ import SchemasPage from "@/pages/schemas";
 import SchemaNewPage from "@/pages/schema-new";
 import HistoryPage from "@/pages/history";
 import ExtractionDetailsPage from "@/pages/extraction-details";
+import PdfExtractPage from "@/pages/pdf-extract";
 import NotFound from "@/pages/not-found";
 
 const queryClient = new QueryClient();
@@ -23,6 +24,7 @@ function Router() {
         <Route path="/schemas/new" component={SchemaNewPage} />
         <Route path="/history" component={HistoryPage} />
         <Route path="/extractions/:id" component={ExtractionDetailsPage} />
+        <Route path="/pdf-extract" component={PdfExtractPage} />
         <Route component={NotFound} />
       </Switch>
     </Layout>

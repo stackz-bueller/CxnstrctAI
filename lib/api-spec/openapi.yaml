@@ -13,6 +13,8 @@ tags:
     description: Document schema management
   - name: extractions
     description: OCR document extraction operations
+  - name: pdf-extractions
+    description: Construction PDF ingestion pipeline
 paths:
   /healthz:
     get:
@@ -166,6 +168,51 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiError"
 
+  /pdf-extractions:
+    get:
+      operationId: listPdfExtractions
+      tags: [pdf-extractions]
+      summary: List all construction PDF extractions
+      responses:
+        "200":
+          description: List of PDF extractions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  extractions:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/PdfExtractionSummary"
+                required:
+                  - extractions
+
+  /pdf-extractions/{id}:
+    get:
+      operationId: getPdfExtraction
+      tags: [pdf-extractions]
+      summary: Get a construction PDF extraction
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: PDF extraction found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PdfExtractionDetail"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
   /extractions/{id}/raw-text:
     get:
       operationId: getExtractionRawText
@@ -308,6 +355,185 @@ components:
         - label
         - confidence
         - present
+
+    ConstructionTitleBlock:
+      type: object
+      properties:
+        project_name:
+          type: string
+          nullable: true
+        drawing_title:
+          type: string
+          nullable: true
+        sheet_number:
+          type: string
+          nullable: true
+        revision:
+          type: string
+          nullable: true
+        date:
+          type: string
+          nullable: true
+        drawn_by:
+          type: string
+          nullable: true
+        scale:
+          type: string
+          nullable: true
+        confidence:
+          type: number
+      required:
+        - confidence
+
+    ConstructionRevision:
+      type: object
+      properties:
+        rev_number:
+          type: string
+          nullable: true
+        date:
+          type: string
+          nullable: true
+        description:
+          type: string
+          nullable: true
+
+    ConstructionCallout:
+      type: object
+      properties:
+        text:
+          type: string
+        type:
+          type: string
+      required:
+        - text
+        - type
+
+    ConstructionLegend:
+      type: object
+      properties:
+        symbol:
+          type: string
+        description:
+          type: string
+      required:
+        - symbol
+        - description
+
+    ConstructionPageResult:
+      type: object
+      properties:
+        page_number:
+          type: integer
+        extraction_method:
+          type: string
+        title_block:
+          $ref: "#/components/schemas/ConstructionTitleBlock"
+        revision_history:
+          type: array
+          items:
+            $ref: "#/components/schemas/ConstructionRevision"
+        general_notes:
+          type: array
+          items:
+            type: string
+        callouts:
+          type: array
+          items:
+            $ref: "#/components/schemas/ConstructionCallout"
+        legends:
+          type: array
+          items:
+            $ref: "#/components/schemas/ConstructionLegend"
+        all_text:
+          type: string
+        ocr_confidence:
+          type: number
+      required:
+        - page_number
+        - extraction_method
+        - title_block
+        - revision_history
+        - general_notes
+        - callouts
+        - legends
+        - all_text
+        - ocr_confidence
+
+    PdfExtractionSummary:
+      type: object
+      properties:
+        id:
+          type: integer
+        fileName:
+          type: string
+        status:
+          type: string
+          enum: [processing, completed, failed]
+        totalPages:
+          type: integer
+        processedPages:
+          type: integer
+        processingTimeMs:
+          type: integer
+        errorMessage:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - fileName
+        - status
+        - totalPages
+        - processedPages
+        - processingTimeMs
+        - createdAt
+        - updatedAt
+
+    PdfExtractionDetail:
+      type: object
+      properties:
+        id:
+          type: integer
+        fileName:
+          type: string
+        status:
+          type: string
+          enum: [processing, completed, failed]
+        totalPages:
+          type: integer
+        processedPages:
+          type: integer
+        processingTimeMs:
+          type: integer
+        errorMessage:
+          type: string
+          nullable: true
+        pages:
+          type: array
+          items:
+            $ref: "#/components/schemas/ConstructionPageResult"
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - fileName
+        - status
+        - totalPages
+        - processedPages
+        - processingTimeMs
+        - pages
+        - createdAt
+        - updatedAt
 
     ExtractionResult:
       type: object

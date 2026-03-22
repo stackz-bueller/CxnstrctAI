@@ -70,6 +70,88 @@ export interface ExtractedField {
   present: boolean;
 }
 
+export interface ConstructionTitleBlock {
+  project_name?: string | null;
+  drawing_title?: string | null;
+  sheet_number?: string | null;
+  revision?: string | null;
+  date?: string | null;
+  drawn_by?: string | null;
+  scale?: string | null;
+  confidence: number;
+}
+
+export interface ConstructionRevision {
+  rev_number?: string | null;
+  date?: string | null;
+  description?: string | null;
+}
+
+export interface ConstructionCallout {
+  text: string;
+  type: string;
+}
+
+export interface ConstructionLegend {
+  symbol: string;
+  description: string;
+}
+
+export interface ConstructionPageResult {
+  page_number: number;
+  extraction_method: string;
+  title_block: ConstructionTitleBlock;
+  revision_history: ConstructionRevision[];
+  general_notes: string[];
+  callouts: ConstructionCallout[];
+  legends: ConstructionLegend[];
+  all_text: string;
+  ocr_confidence: number;
+}
+
+export type PdfExtractionSummaryStatus =
+  (typeof PdfExtractionSummaryStatus)[keyof typeof PdfExtractionSummaryStatus];
+
+export const PdfExtractionSummaryStatus = {
+  processing: "processing",
+  completed: "completed",
+  failed: "failed",
+} as const;
+
+export interface PdfExtractionSummary {
+  id: number;
+  fileName: string;
+  status: PdfExtractionSummaryStatus;
+  totalPages: number;
+  processedPages: number;
+  processingTimeMs: number;
+  errorMessage?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type PdfExtractionDetailStatus =
+  (typeof PdfExtractionDetailStatus)[keyof typeof PdfExtractionDetailStatus];
+
+export const PdfExtractionDetailStatus = {
+  processing: "processing",
+  completed: "completed",
+  failed: "failed",
+} as const;
+
+export interface PdfExtractionDetail {
+  id: number;
+  fileName: string;
+  status: PdfExtractionDetailStatus;
+  totalPages: number;
+  processedPages: number;
+  processingTimeMs: number;
+  errorMessage?: string | null;
+  pages: ConstructionPageResult[];
+  createdAt: string;
+  updatedAt: string;
+}
+
 export type ExtractionResultStatus =
   (typeof ExtractionResultStatus)[keyof typeof ExtractionResultStatus];
 
@@ -110,6 +192,10 @@ export type ListExtractionsParams = {
 
 export type ListExtractions200 = {
   extractions: ExtractionResult[];
+};
+
+export type ListPdfExtractions200 = {
+  extractions: PdfExtractionSummary[];
 };
 
 export type GetExtractionRawText200 = {
