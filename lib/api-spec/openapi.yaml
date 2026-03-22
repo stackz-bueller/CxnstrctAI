@@ -17,6 +17,8 @@ tags:
     description: Construction PDF ingestion pipeline
   - name: spec-extractions
     description: Construction specification document extraction pipeline
+  - name: financial-extractions
+    description: Financial document extraction pipeline (change orders, invoices, receipts)
 paths:
   /healthz:
     get:
@@ -322,6 +324,82 @@ paths:
                   - rawText
         "404":
           description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /financial-extractions:
+    get:
+      operationId: listFinancialExtractions
+      tags: [financial-extractions]
+      summary: List all financial extractions
+      responses:
+        "200":
+          description: List of financial extractions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  extractions:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/FinancialExtractionSummary"
+                required:
+                  - extractions
+
+  /financial-extractions/{id}:
+    get:
+      operationId: getFinancialExtraction
+      tags: [financial-extractions]
+      summary: Get a financial extraction with full document details
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Financial extraction detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FinancialExtractionDetail"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /financial-extractions/upload:
+    post:
+      operationId: uploadFinancialDocument
+      tags: [financial-extractions]
+      summary: Upload and extract a financial document (change order, invoice, receipt)
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+              required:
+                - file
+      responses:
+        "200":
+          description: Extraction started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FinancialExtractionSummary"
+        "400":
+          description: Bad request
           content:
             application/json:
               schema:
@@ -779,6 +857,116 @@ components:
         - pages
         - createdAt
         - updatedAt
+
+    FinancialLineItem:
+      type: object
+      properties:
+        description:
+          type: string
+        quantity:
+          type: string
+          nullable: true
+        unit:
+          type: string
+          nullable: true
+        unit_price:
+          type: string
+          nullable: true
+        extension:
+          type: string
+          nullable: true
+        trade:
+          type: string
+          nullable: true
+        hours:
+          type: string
+          nullable: true
+        rate:
+          type: string
+          nullable: true
+        part_number:
+          type: string
+          nullable: true
+      required:
+        - description
+
+    FinancialDocument:
+      type: object
+      properties:
+        type:
+          type: string
+          enum: [change_order, invoice, receipt, other]
+        page_start:
+          type: integer
+        page_end:
+          type: integer
+        fields:
+          type: object
+          additionalProperties: true
+        line_items:
+          type: array
+          items:
+            $ref: "#/components/schemas/FinancialLineItem"
+        totals:
+          type: object
+          additionalProperties: true
+        raw_text:
+          type: string
+      required:
+        - type
+        - page_start
+        - page_end
+        - fields
+        - line_items
+        - totals
+        - raw_text
+
+    FinancialExtractionSummary:
+      type: object
+      properties:
+        id:
+          type: integer
+        fileName:
+          type: string
+        status:
+          type: string
+          enum: [processing, completed, failed]
+        totalPages:
+          type: integer
+        detectedType:
+          type: string
+          nullable: true
+        processingTimeMs:
+          type: integer
+        errorMessage:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - fileName
+        - status
+        - totalPages
+        - processingTimeMs
+        - createdAt
+        - updatedAt
+
+    FinancialExtractionDetail:
+      allOf:
+        - $ref: "#/components/schemas/FinancialExtractionSummary"
+        - type: object
+          properties:
+            documents:
+              type: array
+              items:
+                $ref: "#/components/schemas/FinancialDocument"
+          required:
+            - documents
 
     ExtractionResult:
       type: object

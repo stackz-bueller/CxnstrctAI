@@ -6,7 +6,7 @@ import fs from "fs";
 import os from "os";
 import { eq } from "drizzle-orm";
 import { db } from "@workspace/db";
-import { constructionExtractionsTable, specExtractionsTable } from "@workspace/db/schema";
+import { constructionExtractionsTable, specExtractionsTable, financialExtractionsTable } from "@workspace/db/schema";
 
 const router: IRouter = Router();
 
@@ -20,7 +20,7 @@ const upload = multer({
   },
 });
 
-type DetectedType = "construction_pdf" | "spec_pdf" | "scanned_pdf" | "image";
+type DetectedType = "construction_pdf" | "spec_pdf" | "change_order" | "invoice" | "receipt" | "scanned_pdf" | "image";
 
 type DetectResult = {
   type: DetectedType;
@@ -102,8 +102,6 @@ router.post("/", upload.single("file"), async (req, res) => {
     return;
   }
 
-  const isSpec = detection.type === "spec_pdf";
-  const pipeline = isSpec ? "spec-extractions" : "pdf-extractions";
   const pageSize = detection.page_width_pts && detection.page_height_pts
     ? `${(detection.page_width_pts / 72).toFixed(1)}"×${(detection.page_height_pts / 72).toFixed(1)}"`
     : null;
@@ -111,13 +109,51 @@ router.post("/", upload.single("file"), async (req, res) => {
   const aiApiKey = process.env["AI_INTEGRATIONS_OPENAI_API_KEY"] ?? "";
   const cwd = process.cwd();
 
-  if (isSpec) {
+  const isFinancial = detection.type === "change_order" || detection.type === "invoice" || detection.type === "receipt";
+  const isSpec = detection.type === "spec_pdf";
+
+  if (isFinancial) {
+    const [record] = await db
+      .insert(financialExtractionsTable)
+      .values({ fileName: file.originalname, status: "processing", totalPages: 0, documents: [], processingTimeMs: 0 })
+      .returning();
+
+    res.json({
+      detectedType: detection.type,
+      pipeline: "financial-extractions",
+      id: record.id,
+      reason: detection.reason,
+      pages: detection.total_pages,
+      pageSize,
+      avgWordsPerPage: detection.avg_words_per_page,
+    });
+
+    void (async () => {
+      const scriptPath = path.resolve(cwd, "../../scripts/financial_processor.py");
+      try {
+        const r = await runScript(scriptPath, [tmpPath, aiBaseUrl, aiApiKey]) as {
+          total_pages: number; detected_type: string; documents: unknown[]; processing_time_ms: number;
+        };
+        await db.update(financialExtractionsTable)
+          .set({ status: "completed", totalPages: r.total_pages, detectedType: r.detected_type, documents: r.documents as never[], processingTimeMs: r.processing_time_ms, updatedAt: new Date() })
+          .where(eq(financialExtractionsTable.id, record.id));
+      } catch (err) {
+        req.log.error({ err }, "Smart financial pipeline failed");
+        await db.update(financialExtractionsTable)
+          .set({ status: "failed", errorMessage: err instanceof Error ? err.message : "Unknown", updatedAt: new Date() })
+          .where(eq(financialExtractionsTable.id, record.id));
+      } finally {
+        try { fs.unlinkSync(tmpPath); } catch { /* ignore */ }
+      }
+    })();
+
+  } else if (isSpec) {
     const [record] = await db
       .insert(specExtractionsTable)
       .values({ fileName: file.originalname, status: "processing", totalPages: 0, sections: [], processingTimeMs: 0 })
       .returning();
 
-    res.json({ detectedType: detection.type, pipeline, id: record.id, reason: detection.reason, pages: detection.total_pages, pageSize, avgWordsPerPage: detection.avg_words_per_page });
+    res.json({ detectedType: detection.type, pipeline: "spec-extractions", id: record.id, reason: detection.reason, pages: detection.total_pages, pageSize, avgWordsPerPage: detection.avg_words_per_page });
 
     void (async () => {
       const scriptPath = path.resolve(cwd, "../../scripts/spec_processor.py");
@@ -144,7 +180,7 @@ router.post("/", upload.single("file"), async (req, res) => {
       .values({ fileName: file.originalname, status: "processing", totalPages: 0, pages: [], processingTimeMs: 0 })
       .returning();
 
-    res.json({ detectedType: detection.type, pipeline, id: record.id, reason: detection.reason, pages: detection.total_pages, pageSize, avgWordsPerPage: detection.avg_words_per_page });
+    res.json({ detectedType: detection.type, pipeline: "pdf-extractions", id: record.id, reason: detection.reason, pages: detection.total_pages, pageSize, avgWordsPerPage: detection.avg_words_per_page });
 
     void (async () => {
       const scriptPath = path.resolve(cwd, "../../scripts/pdf_processor.py");

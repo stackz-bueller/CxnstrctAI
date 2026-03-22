@@ -11,6 +11,7 @@ import HistoryPage from "@/pages/history";
 import ExtractionDetailsPage from "@/pages/extraction-details";
 import PdfExtractPage from "@/pages/pdf-extract";
 import SpecExtractPage from "@/pages/spec-extract";
+import FinancialExtractPage from "@/pages/financial-extract";
 import SmartUploadPage from "@/pages/smart-upload";
 import NotFound from "@/pages/not-found";
 
@@ -28,6 +29,7 @@ function Router() {
         <Route path="/extractions/:id" component={ExtractionDetailsPage} />
         <Route path="/pdf-extract" component={PdfExtractPage} />
         <Route path="/spec-extract" component={SpecExtractPage} />
+        <Route path="/financial-extract" component={FinancialExtractPage} />
         <Route component={NotFound} />
       </Switch>
     </Layout>

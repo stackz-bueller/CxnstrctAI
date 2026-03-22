@@ -32,6 +32,19 @@ SPEC_WORDS = re.compile(
     r'\b(SPECIFICATIONS?|DIVISION|CONTRACTOR|MATERIALS?|REQUIREMENTS?|SUBMITTALS?|EXECUTION|PRODUCTS?|GENERAL)\b',
     re.IGNORECASE,
 )
+# Financial document signals (checked before spec signals)
+CHANGE_ORDER_PATTERN = re.compile(
+    r'(POTENTIAL CHANGE ORDER|CHANGE ORDER PROPOSAL|PCO NUMBER|OVERHEAD.*PROFIT|PROPOSAL FORM)',
+    re.IGNORECASE,
+)
+INVOICE_PATTERN = re.compile(
+    r'(INVOICE NUMBER|INVOICE DATE|INVOICE NO[\.\s#]|TOTAL INVOICE|UNIT PRICE.*QTY)',
+    re.IGNORECASE,
+)
+RECEIPT_PATTERN = re.compile(
+    r'(SALES RECEIPT|CASH RECEIPT|PURCHASE RECEIPT)',
+    re.IGNORECASE,
+)
 
 
 def detect(pdf_path: str) -> dict:
@@ -58,7 +71,7 @@ def detect(pdf_path: str) -> dict:
                 "avg_words_per_page": None,
             }
 
-        # ── Letter-size: check text density and CSI markers ─────────────────
+        # ── Letter-size: check text density and content signals ──────────────
         # Sample first 12 pages to catch PDFs with cover + TOC before content
         extended_sample = pdf.pages[:min(12, total_pages)]
         word_counts = []
@@ -68,18 +81,59 @@ def detect(pdf_path: str) -> dict:
             combined_text += text + "\n"
             word_counts.append(len(text.split()))
 
-        # Use median pages 3-12 for word count (skip sparse cover/TOC pages)
+        # Use pages 3-12 for word count (skip sparse cover/TOC pages)
         body_counts = word_counts[2:] if len(word_counts) > 3 else word_counts
         avg_words = sum(body_counts) / max(1, len(body_counts))
 
+        # ── Financial documents — check FIRST (highest priority) ─────────────
+        # Image-based letter-size PDFs with no text are likely scanned invoices
+        has_no_text = sum(word_counts) < 20
+        if has_no_text:
+            return {
+                "type": "invoice",
+                "reason": "Letter-size image-only PDF — likely scanned invoices or receipts",
+                "total_pages": total_pages,
+                "page_width_pts": width_pts,
+                "page_height_pts": height_pts,
+                "avg_words_per_page": 0,
+            }
+
+        if CHANGE_ORDER_PATTERN.search(combined_text):
+            return {
+                "type": "change_order",
+                "reason": "Change order / PCO proposal form detected",
+                "total_pages": total_pages,
+                "page_width_pts": width_pts,
+                "page_height_pts": height_pts,
+                "avg_words_per_page": round(avg_words, 1),
+            }
+
+        if INVOICE_PATTERN.search(combined_text):
+            return {
+                "type": "invoice",
+                "reason": "Invoice detected (invoice number / date / unit price fields found)",
+                "total_pages": total_pages,
+                "page_width_pts": width_pts,
+                "page_height_pts": height_pts,
+                "avg_words_per_page": round(avg_words, 1),
+            }
+
+        if RECEIPT_PATTERN.search(combined_text):
+            return {
+                "type": "receipt",
+                "reason": "Receipt detected",
+                "total_pages": total_pages,
+                "page_width_pts": width_pts,
+                "page_height_pts": height_pts,
+                "avg_words_per_page": round(avg_words, 1),
+            }
+
+        # ── CSI specification signals ─────────────────────────────────────────
         has_csi = bool(CSI_PATTERN.search(combined_text))
-        # CSI section numbers appearing in TOC lists (e.g. "010100", "033000")
         csi_toc_hits = len(CSI_TOC_PATTERN.findall(combined_text))
         spec_word_hits = len(SPEC_WORDS.findall(combined_text))
         has_title_block = len(TITLE_BLOCK_WORDS.findall(combined_text)) >= 3 and avg_words < 60
 
-        # Strong spec signals: CSI header OR multiple CSI section numbers in TOC
-        # OR spec vocabulary + readable text
         is_spec = (
             has_csi
             or csi_toc_hits >= 5
@@ -98,9 +152,9 @@ def detect(pdf_path: str) -> dict:
             pdf_type = "construction_pdf"
             reason = f"Engineering title-block terms detected; image-heavy ({avg_words:.0f} words/page avg)"
         else:
-            # Low-text letter-size PDF — most likely a scanned drawing
-            pdf_type = "construction_pdf"
-            reason = f"Letter-size but image-heavy ({avg_words:.0f} words/page avg) — treating as drawing"
+            # Low-text, no strong signals — assume financial/admin
+            pdf_type = "invoice"
+            reason = f"Letter-size, low text density ({avg_words:.0f} words/page avg) — treating as financial document"
 
         return {
             "type": pdf_type,

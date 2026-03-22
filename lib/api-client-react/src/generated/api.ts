@@ -22,10 +22,13 @@ import type {
   DeleteSchema200,
   DocumentSchema,
   ExtractionResult,
+  FinancialExtractionDetail,
+  FinancialExtractionSummary,
   GetExtractionRawText200,
   HealthStatus,
   ListExtractions200,
   ListExtractionsParams,
+  ListFinancialExtractions200,
   ListPdfExtractions200,
   ListSchemas200,
   ListSpecExtractions200,
@@ -33,6 +36,7 @@ import type {
   SmartUploadBody,
   SmartUploadResult,
   SpecExtractionDetail,
+  UploadFinancialDocumentBody,
 } from "./api.schemas";
 
 import { customFetch } from "../custom-fetch";
@@ -1133,3 +1137,265 @@ export function useGetExtractionRawText<
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
+
+/**
+ * @summary List all financial extractions
+ */
+export const getListFinancialExtractionsUrl = () => {
+  return `/api/financial-extractions`;
+};
+
+export const listFinancialExtractions = async (
+  options?: RequestInit,
+): Promise<ListFinancialExtractions200> => {
+  return customFetch<ListFinancialExtractions200>(
+    getListFinancialExtractionsUrl(),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getListFinancialExtractionsQueryKey = () => {
+  return [`/api/financial-extractions`] as const;
+};
+
+export const getListFinancialExtractionsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listFinancialExtractions>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listFinancialExtractions>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getListFinancialExtractionsQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listFinancialExtractions>>
+  > = ({ signal }) => listFinancialExtractions({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listFinancialExtractions>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListFinancialExtractionsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listFinancialExtractions>>
+>;
+export type ListFinancialExtractionsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary List all financial extractions
+ */
+
+export function useListFinancialExtractions<
+  TData = Awaited<ReturnType<typeof listFinancialExtractions>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listFinancialExtractions>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListFinancialExtractionsQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Get a financial extraction with full document details
+ */
+export const getGetFinancialExtractionUrl = (id: number) => {
+  return `/api/financial-extractions/${id}`;
+};
+
+export const getFinancialExtraction = async (
+  id: number,
+  options?: RequestInit,
+): Promise<FinancialExtractionDetail> => {
+  return customFetch<FinancialExtractionDetail>(
+    getGetFinancialExtractionUrl(id),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetFinancialExtractionQueryKey = (id: number) => {
+  return [`/api/financial-extractions/${id}`] as const;
+};
+
+export const getGetFinancialExtractionQueryOptions = <
+  TData = Awaited<ReturnType<typeof getFinancialExtraction>>,
+  TError = ErrorType<ApiError>,
+>(
+  id: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getFinancialExtraction>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetFinancialExtractionQueryKey(id);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getFinancialExtraction>>
+  > = ({ signal }) => getFinancialExtraction(id, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getFinancialExtraction>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetFinancialExtractionQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getFinancialExtraction>>
+>;
+export type GetFinancialExtractionQueryError = ErrorType<ApiError>;
+
+/**
+ * @summary Get a financial extraction with full document details
+ */
+
+export function useGetFinancialExtraction<
+  TData = Awaited<ReturnType<typeof getFinancialExtraction>>,
+  TError = ErrorType<ApiError>,
+>(
+  id: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getFinancialExtraction>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetFinancialExtractionQueryOptions(id, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Upload and extract a financial document (change order, invoice, receipt)
+ */
+export const getUploadFinancialDocumentUrl = () => {
+  return `/api/financial-extractions/upload`;
+};
+
+export const uploadFinancialDocument = async (
+  uploadFinancialDocumentBody: UploadFinancialDocumentBody,
+  options?: RequestInit,
+): Promise<FinancialExtractionSummary> => {
+  const formData = new FormData();
+  formData.append(`file`, uploadFinancialDocumentBody.file);
+
+  return customFetch<FinancialExtractionSummary>(
+    getUploadFinancialDocumentUrl(),
+    {
+      ...options,
+      method: "POST",
+      body: formData,
+    },
+  );
+};
+
+export const getUploadFinancialDocumentMutationOptions = <
+  TError = ErrorType<ApiError>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof uploadFinancialDocument>>,
+    TError,
+    { data: BodyType<UploadFinancialDocumentBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof uploadFinancialDocument>>,
+  TError,
+  { data: BodyType<UploadFinancialDocumentBody> },
+  TContext
+> => {
+  const mutationKey = ["uploadFinancialDocument"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof uploadFinancialDocument>>,
+    { data: BodyType<UploadFinancialDocumentBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return uploadFinancialDocument(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type UploadFinancialDocumentMutationResult = NonNullable<
+  Awaited<ReturnType<typeof uploadFinancialDocument>>
+>;
+export type UploadFinancialDocumentMutationBody =
+  BodyType<UploadFinancialDocumentBody>;
+export type UploadFinancialDocumentMutationError = ErrorType<ApiError>;
+
+/**
+ * @summary Upload and extract a financial document (change order, invoice, receipt)
+ */
+export const useUploadFinancialDocument = <
+  TError = ErrorType<ApiError>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof uploadFinancialDocument>>,
+    TError,
+    { data: BodyType<UploadFinancialDocumentBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof uploadFinancialDocument>>,
+  TError,
+  { data: BodyType<UploadFinancialDocumentBody> },
+  TContext
+> => {
+  return useMutation(getUploadFinancialDocumentMutationOptions(options));
+};

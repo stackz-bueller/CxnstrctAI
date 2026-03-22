@@ -1,6 +1,6 @@
 import { ReactNode } from "react";
 import { Link, useLocation } from "wouter";
-import { Layers, History, ScanLine, HardHat, BookOpen, Sparkles, Settings } from "lucide-react";
+import { Layers, History, ScanLine, HardHat, BookOpen, Sparkles, Settings, Receipt } from "lucide-react";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
 
@@ -16,6 +16,7 @@ export function Layout({ children }: { children: ReactNode }) {
     { href: "/extract", label: "Image OCR", icon: ScanLine },
     { href: "/pdf-extract", label: "Construction PDF", icon: HardHat },
     { href: "/spec-extract", label: "Specifications", icon: BookOpen },
+    { href: "/financial-extract", label: "Financial Docs", icon: Receipt },
     { href: "/schemas", label: "Document Schemas", icon: Layers },
     { href: "/history", label: "History", icon: History },
   ];

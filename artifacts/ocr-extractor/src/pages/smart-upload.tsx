@@ -13,15 +13,16 @@ import {
   ChevronRight,
   Sparkles,
   AlertCircle,
+  Receipt,
 } from "lucide-react";
 
 const API_BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
-type DetectedType = "construction_pdf" | "spec_pdf" | "scanned_pdf" | "image";
+type DetectedType = "construction_pdf" | "spec_pdf" | "scanned_pdf" | "image" | "change_order" | "invoice" | "receipt";
 
 type SmartUploadResult = {
   detectedType: DetectedType;
-  pipeline: "pdf-extractions" | "spec-extractions" | "extractions";
+  pipeline: "pdf-extractions" | "spec-extractions" | "extractions" | "financial-extractions";
   id: number | null;
   reason: string;
   pages: number | null;
@@ -53,6 +54,24 @@ const TYPE_META: Record<DetectedType, { label: string; icon: typeof HardHat; col
     icon: ScanLine,
     color: "text-blue-500",
     route: () => `/extract`,
+  },
+  change_order: {
+    label: "Change Order / PCO",
+    icon: Receipt,
+    color: "text-amber-400",
+    route: (id) => `/financial-extract?id=${id}`,
+  },
+  invoice: {
+    label: "Supplier Invoice",
+    icon: Receipt,
+    color: "text-teal-400",
+    route: (id) => `/financial-extract?id=${id}`,
+  },
+  receipt: {
+    label: "Receipt",
+    icon: Receipt,
+    color: "text-green-400",
+    route: (id) => `/financial-extract?id=${id}`,
   },
 };
 
@@ -194,16 +213,17 @@ export default function SmartUploadPage() {
           Drop any document
         </h1>
         <p className="text-lg text-muted-foreground">
-          The system automatically identifies whether it's a construction drawing, specification, or general document — then routes it to the right pipeline.
+          The system automatically identifies whether it's a construction drawing, specification, financial document, or image — then routes it to the right pipeline.
         </p>
       </div>
 
       {/* Supported types legend */}
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {[
           { icon: HardHat, label: "Construction PDF", desc: "Large-format drawings", color: "text-amber-500" },
           { icon: BookOpen, label: "Specification PDF", desc: "CSI-format specs", color: "text-violet-500" },
-          { icon: ScanLine, label: "Image / Receipt", desc: "JPG, PNG, WebP", color: "text-blue-500" },
+          { icon: Receipt, label: "Change Orders / Invoices", desc: "PCOs, invoices, receipts", color: "text-teal-400" },
+          { icon: ScanLine, label: "Image / Photo", desc: "JPG, PNG, WebP", color: "text-blue-500" },
         ].map(({ icon: Icon, label, desc, color }) => (
           <div key={label} className="bg-card rounded-xl border border-border p-4 text-center space-y-2">
             <Icon className={`size-6 mx-auto ${color}`} />

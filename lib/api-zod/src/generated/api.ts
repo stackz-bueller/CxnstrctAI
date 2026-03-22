@@ -371,3 +371,88 @@ export const GetExtractionRawTextParams = zod.object({
 export const GetExtractionRawTextResponse = zod.object({
   rawText: zod.string(),
 });
+
+/**
+ * @summary List all financial extractions
+ */
+export const ListFinancialExtractionsResponse = zod.object({
+  extractions: zod.array(
+    zod.object({
+      id: zod.number(),
+      fileName: zod.string(),
+      status: zod.enum(["processing", "completed", "failed"]),
+      totalPages: zod.number(),
+      detectedType: zod.string().nullish(),
+      processingTimeMs: zod.number(),
+      errorMessage: zod.string().nullish(),
+      createdAt: zod.date(),
+      updatedAt: zod.date(),
+    }),
+  ),
+});
+
+/**
+ * @summary Get a financial extraction with full document details
+ */
+export const GetFinancialExtractionParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const GetFinancialExtractionResponse = zod
+  .object({
+    id: zod.number(),
+    fileName: zod.string(),
+    status: zod.enum(["processing", "completed", "failed"]),
+    totalPages: zod.number(),
+    detectedType: zod.string().nullish(),
+    processingTimeMs: zod.number(),
+    errorMessage: zod.string().nullish(),
+    createdAt: zod.date(),
+    updatedAt: zod.date(),
+  })
+  .and(
+    zod.object({
+      documents: zod.array(
+        zod.object({
+          type: zod.enum(["change_order", "invoice", "receipt", "other"]),
+          page_start: zod.number(),
+          page_end: zod.number(),
+          fields: zod.record(zod.string(), zod.unknown()),
+          line_items: zod.array(
+            zod.object({
+              description: zod.string(),
+              quantity: zod.string().nullish(),
+              unit: zod.string().nullish(),
+              unit_price: zod.string().nullish(),
+              extension: zod.string().nullish(),
+              trade: zod.string().nullish(),
+              hours: zod.string().nullish(),
+              rate: zod.string().nullish(),
+              part_number: zod.string().nullish(),
+            }),
+          ),
+          totals: zod.record(zod.string(), zod.unknown()),
+          raw_text: zod.string(),
+        }),
+      ),
+    }),
+  );
+
+/**
+ * @summary Upload and extract a financial document (change order, invoice, receipt)
+ */
+export const UploadFinancialDocumentBody = zod.object({
+  file: zod.instanceof(File),
+});
+
+export const UploadFinancialDocumentResponse = zod.object({
+  id: zod.number(),
+  fileName: zod.string(),
+  status: zod.enum(["processing", "completed", "failed"]),
+  totalPages: zod.number(),
+  detectedType: zod.string().nullish(),
+  processingTimeMs: zod.number(),
+  errorMessage: zod.string().nullish(),
+  createdAt: zod.date(),
+  updatedAt: zod.date(),
+});

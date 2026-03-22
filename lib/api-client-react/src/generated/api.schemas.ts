@@ -246,6 +246,67 @@ export interface PdfExtractionDetail {
   updatedAt: string;
 }
 
+export interface FinancialLineItem {
+  description: string;
+  quantity?: string | null;
+  unit?: string | null;
+  unit_price?: string | null;
+  extension?: string | null;
+  trade?: string | null;
+  hours?: string | null;
+  rate?: string | null;
+  part_number?: string | null;
+}
+
+export type FinancialDocumentType =
+  (typeof FinancialDocumentType)[keyof typeof FinancialDocumentType];
+
+export const FinancialDocumentType = {
+  change_order: "change_order",
+  invoice: "invoice",
+  receipt: "receipt",
+  other: "other",
+} as const;
+
+export type FinancialDocumentFields = { [key: string]: unknown };
+
+export type FinancialDocumentTotals = { [key: string]: unknown };
+
+export interface FinancialDocument {
+  type: FinancialDocumentType;
+  page_start: number;
+  page_end: number;
+  fields: FinancialDocumentFields;
+  line_items: FinancialLineItem[];
+  totals: FinancialDocumentTotals;
+  raw_text: string;
+}
+
+export type FinancialExtractionSummaryStatus =
+  (typeof FinancialExtractionSummaryStatus)[keyof typeof FinancialExtractionSummaryStatus];
+
+export const FinancialExtractionSummaryStatus = {
+  processing: "processing",
+  completed: "completed",
+  failed: "failed",
+} as const;
+
+export interface FinancialExtractionSummary {
+  id: number;
+  fileName: string;
+  status: FinancialExtractionSummaryStatus;
+  totalPages: number;
+  detectedType?: string | null;
+  processingTimeMs: number;
+  errorMessage?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type FinancialExtractionDetail = FinancialExtractionSummary & {
+  documents: FinancialDocument[];
+};
+
 export type ExtractionResultStatus =
   (typeof ExtractionResultStatus)[keyof typeof ExtractionResultStatus];
 
@@ -302,4 +363,12 @@ export type ListSpecExtractions200 = {
 
 export type GetExtractionRawText200 = {
   rawText: string;
+};
+
+export type ListFinancialExtractions200 = {
+  extractions: FinancialExtractionSummary[];
+};
+
+export type UploadFinancialDocumentBody = {
+  file: Blob;
 };
