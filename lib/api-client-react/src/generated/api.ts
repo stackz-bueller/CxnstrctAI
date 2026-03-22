@@ -30,6 +30,8 @@ import type {
   ListSchemas200,
   ListSpecExtractions200,
   PdfExtractionDetail,
+  SmartUploadBody,
+  SmartUploadResult,
   SpecExtractionDetail,
 } from "./api.schemas";
 
@@ -793,6 +795,94 @@ export function useGetPdfExtraction<
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
+
+/**
+ * @summary Auto-detect document type and route to correct pipeline
+ */
+export const getSmartUploadUrl = () => {
+  return `/api/smart-upload`;
+};
+
+export const smartUpload = async (
+  smartUploadBody: SmartUploadBody,
+  options?: RequestInit,
+): Promise<SmartUploadResult> => {
+  const formData = new FormData();
+  formData.append(`file`, smartUploadBody.file);
+
+  return customFetch<SmartUploadResult>(getSmartUploadUrl(), {
+    ...options,
+    method: "POST",
+    body: formData,
+  });
+};
+
+export const getSmartUploadMutationOptions = <
+  TError = ErrorType<ApiError>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof smartUpload>>,
+    TError,
+    { data: BodyType<SmartUploadBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof smartUpload>>,
+  TError,
+  { data: BodyType<SmartUploadBody> },
+  TContext
+> => {
+  const mutationKey = ["smartUpload"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof smartUpload>>,
+    { data: BodyType<SmartUploadBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return smartUpload(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type SmartUploadMutationResult = NonNullable<
+  Awaited<ReturnType<typeof smartUpload>>
+>;
+export type SmartUploadMutationBody = BodyType<SmartUploadBody>;
+export type SmartUploadMutationError = ErrorType<ApiError>;
+
+/**
+ * @summary Auto-detect document type and route to correct pipeline
+ */
+export const useSmartUpload = <
+  TError = ErrorType<ApiError>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof smartUpload>>,
+    TError,
+    { data: BodyType<SmartUploadBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof smartUpload>>,
+  TError,
+  { data: BodyType<SmartUploadBody> },
+  TContext
+> => {
+  return useMutation(getSmartUploadMutationOptions(options));
+};
 
 /**
  * @summary List all spec extractions

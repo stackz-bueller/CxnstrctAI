@@ -279,6 +279,28 @@ export const GetPdfExtractionResponse = zod.object({
 });
 
 /**
+ * @summary Auto-detect document type and route to correct pipeline
+ */
+export const SmartUploadBody = zod.object({
+  file: zod.instanceof(File),
+});
+
+export const SmartUploadResponse = zod.object({
+  detectedType: zod.enum([
+    "construction_pdf",
+    "spec_pdf",
+    "scanned_pdf",
+    "image",
+  ]),
+  pipeline: zod.enum(["pdf-extractions", "spec-extractions", "extractions"]),
+  id: zod.number().nullish(),
+  reason: zod.string(),
+  pages: zod.number().nullish(),
+  pageSize: zod.string().nullish(),
+  avgWordsPerPage: zod.number().nullish(),
+});
+
+/**
  * @summary List all spec extractions
  */
 export const ListSpecExtractionsResponse = zod.object({

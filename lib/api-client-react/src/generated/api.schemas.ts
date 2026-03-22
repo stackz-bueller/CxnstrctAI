@@ -70,6 +70,35 @@ export interface ExtractedField {
   present: boolean;
 }
 
+export type SmartUploadResultDetectedType =
+  (typeof SmartUploadResultDetectedType)[keyof typeof SmartUploadResultDetectedType];
+
+export const SmartUploadResultDetectedType = {
+  construction_pdf: "construction_pdf",
+  spec_pdf: "spec_pdf",
+  scanned_pdf: "scanned_pdf",
+  image: "image",
+} as const;
+
+export type SmartUploadResultPipeline =
+  (typeof SmartUploadResultPipeline)[keyof typeof SmartUploadResultPipeline];
+
+export const SmartUploadResultPipeline = {
+  "pdf-extractions": "pdf-extractions",
+  "spec-extractions": "spec-extractions",
+  extractions: "extractions",
+} as const;
+
+export interface SmartUploadResult {
+  detectedType: SmartUploadResultDetectedType;
+  pipeline: SmartUploadResultPipeline;
+  id?: number | null;
+  reason: string;
+  pages?: number | null;
+  pageSize?: string | null;
+  avgWordsPerPage?: number | null;
+}
+
 export interface SpecSubsection {
   identifier: string;
   title?: string | null;
@@ -261,6 +290,10 @@ export type ListExtractions200 = {
 
 export type ListPdfExtractions200 = {
   extractions: PdfExtractionSummary[];
+};
+
+export type SmartUploadBody = {
+  file: Blob;
 };
 
 export type ListSpecExtractions200 = {

@@ -11,6 +11,7 @@ import HistoryPage from "@/pages/history";
 import ExtractionDetailsPage from "@/pages/extraction-details";
 import PdfExtractPage from "@/pages/pdf-extract";
 import SpecExtractPage from "@/pages/spec-extract";
+import SmartUploadPage from "@/pages/smart-upload";
 import NotFound from "@/pages/not-found";
 
 const queryClient = new QueryClient();
@@ -19,7 +20,7 @@ function Router() {
   return (
     <Layout>
       <Switch>
-        <Route path="/" component={() => <Redirect to="/extract" />} />
+        <Route path="/" component={SmartUploadPage} />
         <Route path="/extract" component={ExtractPage} />
         <Route path="/schemas" component={SchemasPage} />
         <Route path="/schemas/new" component={SchemaNewPage} />

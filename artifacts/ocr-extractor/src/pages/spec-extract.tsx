@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { useDropzone } from "react-dropzone";
 import { motion, AnimatePresence } from "framer-motion";
 import { format } from "date-fns";
@@ -415,7 +415,17 @@ function ExtractionsList({
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function SpecExtractPage() {
-  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [selectedId, setSelectedId] = useState<number | null>(() => {
+    const params = new URLSearchParams(window.location.search);
+    const id = params.get("id");
+    return id ? parseInt(id, 10) : null;
+  });
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const id = params.get("id");
+    if (id) setSelectedId(parseInt(id, 10));
+  }, []);
 
   return (
     <motion.div

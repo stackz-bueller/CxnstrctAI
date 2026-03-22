@@ -1,6 +1,6 @@
 import { ReactNode } from "react";
 import { Link, useLocation } from "wouter";
-import { Layers, History, ScanLine, HardHat, BookOpen, Settings } from "lucide-react";
+import { Layers, History, ScanLine, HardHat, BookOpen, Sparkles, Settings } from "lucide-react";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
 
@@ -12,7 +12,8 @@ export function Layout({ children }: { children: ReactNode }) {
   const [location] = useLocation();
 
   const navItems = [
-    { href: "/extract", label: "Extract Document", icon: ScanLine },
+    { href: "/", label: "Smart Upload", icon: Sparkles },
+    { href: "/extract", label: "Image OCR", icon: ScanLine },
     { href: "/pdf-extract", label: "Construction PDF", icon: HardHat },
     { href: "/spec-extract", label: "Specifications", icon: BookOpen },
     { href: "/schemas", label: "Document Schemas", icon: Layers },
@@ -33,7 +34,7 @@ export function Layout({ children }: { children: ReactNode }) {
 
         <nav className="flex-1 px-4 space-y-1 overflow-y-auto">
           {navItems.map((item) => {
-            const isActive = location.startsWith(item.href) && (item.href !== "/" || location === "/");
+            const isActive = item.href === "/" ? location === "/" : location.startsWith(item.href);
             return (
               <Link
                 key={item.href}

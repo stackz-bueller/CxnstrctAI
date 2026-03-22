@@ -215,6 +215,43 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiError"
 
+  /smart-upload:
+    post:
+      operationId: smartUpload
+      tags: [extractions]
+      summary: Auto-detect document type and route to correct pipeline
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+              required:
+                - file
+      responses:
+        "200":
+          description: Detection and upload result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SmartUploadResult"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "500":
+          description: Detection or upload failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
   /spec-extractions:
     get:
       operationId: listSpecExtractions
@@ -402,6 +439,34 @@ components:
         - label
         - confidence
         - present
+
+    SmartUploadResult:
+      type: object
+      properties:
+        detectedType:
+          type: string
+          enum: [construction_pdf, spec_pdf, scanned_pdf, image]
+        pipeline:
+          type: string
+          enum: [pdf-extractions, spec-extractions, extractions]
+        id:
+          type: integer
+          nullable: true
+        reason:
+          type: string
+        pages:
+          type: integer
+          nullable: true
+        pageSize:
+          type: string
+          nullable: true
+        avgWordsPerPage:
+          type: number
+          nullable: true
+      required:
+        - detectedType
+        - pipeline
+        - reason
 
     SpecSubsection:
       type: object
