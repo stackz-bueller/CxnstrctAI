@@ -465,7 +465,7 @@ export default function ProjectDetailPage() {
         </div>
 
         {/* Right: Chat panel */}
-        <div className="lg:col-span-3 flex flex-col rounded-xl border border-border bg-card overflow-hidden">
+        <div className="lg:col-span-3 flex flex-col rounded-xl border border-border bg-card overflow-hidden min-h-0">
           {/* Chat header */}
           <div className="flex items-center justify-between px-4 py-3 border-b border-border">
             <div className="flex items-center gap-2">
@@ -489,7 +489,7 @@ export default function ProjectDetailPage() {
           </div>
 
           {/* Messages */}
-          <div className="flex-1 overflow-y-auto p-4 space-y-4 min-h-0" style={{ maxHeight: "calc(100vh - 380px)" }}>
+          <div className="flex-1 overflow-y-auto p-4 space-y-4 min-h-0">
             {messages.length === 0 && (
               <div className="space-y-4">
                 <div className="text-center py-6">
