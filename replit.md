@@ -92,6 +92,27 @@ A third pipeline designed specifically for CSI-format specification PDFs (letter
 
 **Script:** `scripts/spec_processor.py` — spawned as a child process by the Node.js route. MAX_PAGES=1200, MAX_SECTIONS=20 (GPT-structured), regex-only for the rest.
 
+### Project AI Agents (RAG Sidecar)
+
+A project-scoped AI assistant that answers questions only from indexed project documents.
+
+**How it works:**
+1. Create a project (e.g. "Wyoming Complex")
+2. Assign completed extractions (specs, drawings, financials, OCR) to the project
+3. Each document is automatically chunked and embedded using `text-embedding-3-small`
+4. When a question is asked, it's embedded, top-K semantically similar chunks are retrieved (cosine similarity), and GPT-4o answers using only those chunks as context — no outside knowledge
+5. Chat history is stored per project; each project is fully isolated
+
+**Anti-hallucination:** If no relevant chunks exceed a similarity threshold (0.25), the AI explicitly says it cannot find the answer rather than guessing.
+
+**Key files:**
+- `artifacts/api-server/src/routes/projects/indexer.ts` — chunker, embedder, cosine search
+- `artifacts/api-server/src/routes/projects/router.ts` — projects CRUD + document management + RAG chat
+- `artifacts/ocr-extractor/src/pages/projects.tsx` — project list UI
+- `artifacts/ocr-extractor/src/pages/project-detail.tsx` — document manager + chat UI
+
+**New DB tables:** `projects`, `project_documents`, `document_chunks`, `project_chats`
+
 ### API Endpoints
 
 - `GET /api/schemas` — list schemas
@@ -108,6 +129,18 @@ A third pipeline designed specifically for CSI-format specification PDFs (letter
 - `GET /api/spec-extractions` — list all spec extractions (summary, no sections)
 - `GET /api/spec-extractions/:id` — get full extraction with sections array
 - `POST /api/spec-extractions/upload` — upload a spec PDF (starts async pipeline, returns immediately)
+- `GET /api/projects` — list all projects
+- `POST /api/projects` — create project `{ name, description? }`
+- `GET /api/projects/:id` — get project with its documents
+- `PATCH /api/projects/:id` — update project
+- `DELETE /api/projects/:id` — delete project + chunks + chat history
+- `GET /api/projects/:id/documents` — list project documents
+- `POST /api/projects/:id/documents` — add document `{ documentType, documentId }` → triggers background indexing
+- `DELETE /api/projects/:id/documents/:docId` — remove document + its chunks
+- `POST /api/projects/:id/documents/:docId/reindex` — re-run indexing
+- `GET /api/projects/:id/chat` — get chat history
+- `DELETE /api/projects/:id/chat` — clear chat history
+- `POST /api/projects/:id/chat` — ask question `{ question }` → RAG response with sources
 
 ## TypeScript & Composite Projects
 

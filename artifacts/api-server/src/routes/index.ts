@@ -6,6 +6,7 @@ import pdfExtractionsRouter from "./ocr/pdf-extractions";
 import specExtractionsRouter from "./ocr/spec-extractions";
 import financialExtractionsRouter from "./ocr/financial-extractions";
 import smartUploadRouter from "./ocr/smart-upload";
+import projectsRouter from "./projects/router";
 
 const router: IRouter = Router();
 
@@ -16,5 +17,6 @@ router.use("/pdf-extractions", pdfExtractionsRouter);
 router.use("/spec-extractions", specExtractionsRouter);
 router.use("/financial-extractions", financialExtractionsRouter);
 router.use("/smart-upload", smartUploadRouter);
+router.use("/projects", projectsRouter);
 
 export default router;

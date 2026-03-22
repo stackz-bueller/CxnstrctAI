@@ -1,4 +1,4 @@
-import { Switch, Route, Router as WouterRouter, Redirect } from "wouter";
+import { Switch, Route, Router as WouterRouter } from "wouter";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -13,6 +13,8 @@ import PdfExtractPage from "@/pages/pdf-extract";
 import SpecExtractPage from "@/pages/spec-extract";
 import FinancialExtractPage from "@/pages/financial-extract";
 import SmartUploadPage from "@/pages/smart-upload";
+import ProjectsPage from "@/pages/projects";
+import ProjectDetailPage from "@/pages/project-detail";
 import NotFound from "@/pages/not-found";
 
 const queryClient = new QueryClient();
@@ -30,6 +32,8 @@ function Router() {
         <Route path="/pdf-extract" component={PdfExtractPage} />
         <Route path="/spec-extract" component={SpecExtractPage} />
         <Route path="/financial-extract" component={FinancialExtractPage} />
+        <Route path="/projects" component={ProjectsPage} />
+        <Route path="/projects/:id" component={ProjectDetailPage} />
         <Route component={NotFound} />
       </Switch>
     </Layout>
