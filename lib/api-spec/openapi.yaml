@@ -1,15 +1,18 @@
 openapi: 3.1.0
 info:
-  # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: OCR Information Extraction API - Schema-anchored extraction pipeline
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: schemas
+    description: Document schema management
+  - name: extractions
+    description: OCR document extraction operations
 paths:
   /healthz:
     get:
@@ -24,6 +27,175 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /schemas:
+    get:
+      operationId: listSchemas
+      tags: [schemas]
+      summary: List document schemas
+      description: Returns all defined extraction schemas
+      responses:
+        "200":
+          description: List of schemas
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  schemas:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/DocumentSchema"
+                required:
+                  - schemas
+    post:
+      operationId: createSchema
+      tags: [schemas]
+      summary: Create a document schema
+      description: Define a new extraction schema with fields
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSchemaBody"
+      responses:
+        "201":
+          description: Schema created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocumentSchema"
+
+  /schemas/{id}:
+    get:
+      operationId: getSchema
+      tags: [schemas]
+      summary: Get a document schema
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Schema found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocumentSchema"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+    delete:
+      operationId: deleteSchema
+      tags: [schemas]
+      summary: Delete a document schema
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Schema deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                required:
+                  - success
+
+  /extractions:
+    get:
+      operationId: listExtractions
+      tags: [extractions]
+      summary: List all extractions
+      description: Returns all past extraction results
+      parameters:
+        - name: schemaId
+          in: query
+          required: false
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: List of extractions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  extractions:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ExtractionResult"
+                required:
+                  - extractions
+
+  /extractions/{id}:
+    get:
+      operationId: getExtraction
+      tags: [extractions]
+      summary: Get an extraction result
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Extraction found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExtractionResult"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /extractions/{id}/raw-text:
+    get:
+      operationId: getExtractionRawText
+      tags: [extractions]
+      summary: Get raw OCR text for an extraction
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Raw text
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  rawText:
+                    type: string
+                required:
+                  - rawText
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
 components:
   schemas:
     HealthStatus:
@@ -34,3 +206,152 @@ components:
       required:
         - status
 
+    ApiError:
+      type: object
+      properties:
+        error:
+          type: string
+      required:
+        - error
+
+    SchemaField:
+      type: object
+      properties:
+        name:
+          type: string
+          description: Field identifier (snake_case)
+        label:
+          type: string
+          description: Human-readable field label
+        type:
+          type: string
+          enum: [string, number, date, boolean, array]
+          description: Data type for this field
+        description:
+          type: string
+          description: What this field represents and how to extract it
+        required:
+          type: boolean
+          description: Whether this field must be present in every extraction
+        example:
+          type: string
+          description: Example value for this field
+      required:
+        - name
+        - label
+        - type
+        - description
+        - required
+
+    DocumentSchema:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+          description: Schema name (e.g. "Receipt", "Invoice")
+        description:
+          type: string
+          description: What type of document this schema is for
+        fields:
+          type: array
+          items:
+            $ref: "#/components/schemas/SchemaField"
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - name
+        - description
+        - fields
+        - createdAt
+        - updatedAt
+
+    CreateSchemaBody:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        fields:
+          type: array
+          items:
+            $ref: "#/components/schemas/SchemaField"
+      required:
+        - name
+        - description
+        - fields
+
+    ExtractedField:
+      type: object
+      properties:
+        name:
+          type: string
+        label:
+          type: string
+        value:
+          description: Extracted value (null if not found)
+        confidence:
+          type: number
+          description: Confidence score 0-1
+        present:
+          type: boolean
+          description: Whether the field was found in the document
+      required:
+        - name
+        - label
+        - confidence
+        - present
+
+    ExtractionResult:
+      type: object
+      properties:
+        id:
+          type: integer
+        schemaId:
+          type: integer
+        schemaName:
+          type: string
+        fileName:
+          type: string
+        fileType:
+          type: string
+        status:
+          type: string
+          enum: [pending, processing, completed, failed]
+        fields:
+          type: array
+          items:
+            $ref: "#/components/schemas/ExtractedField"
+        overallConfidence:
+          type: number
+          description: Average confidence across all fields
+        processingTimeMs:
+          type: integer
+        errorMessage:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - schemaId
+        - schemaName
+        - fileName
+        - fileType
+        - status
+        - fields
+        - overallConfidence
+        - processingTimeMs
+        - createdAt
+        - updatedAt

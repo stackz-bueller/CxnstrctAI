@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/"
+title = "OCR Extractor"
+version = "1.0.0"
+id = "artifacts/ocr-extractor"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 21836
+
+[services.development]
+run = "pnpm --filter @workspace/ocr-extractor run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/ocr-extractor", "run", "build" ]
+publicDir = "artifacts/ocr-extractor/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "21836"
+BASE_PATH = "/"

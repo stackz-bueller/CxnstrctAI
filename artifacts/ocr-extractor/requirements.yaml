@@ -1,0 +1,17 @@
+packages:
+  "framer-motion": "For page transitions and smooth UI animations"
+  "react-dropzone": "For handling drag-and-drop document uploads"
+  "date-fns": "For formatting timestamps"
+  "react-hook-form": "For complex form state management"
+  "@hookform/resolvers": "For integrating Zod with react-hook-form"
+  "zod": "For schema validation"
+
+images:
+  - path: "artifacts/ocr-extractor/public/images/auth-bg.png"
+    description: "Abstract geometric background with dark slate and subtle cyan technical glowing grid lines"
+    aspect_ratio: "16:9"
+
+notes:
+  - "Assuming custom upload endpoint /api/extractions/upload expects multipart/form-data with fields: schemaId and file."
+  - "Assuming the original uploaded document can be accessed at /api/extractions/:id/file for preview purposes."
+  - "Using dark mode professional technical styling with muted slate and teal accents."
