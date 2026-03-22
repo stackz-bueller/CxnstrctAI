@@ -166,9 +166,10 @@ function runPythonPipeline(
       stderr += chunk.toString();
     });
 
-    proc.on("close", (code) => {
-      if (code !== 0) {
-        reject(new Error(`Python process exited with code ${code}: ${stderr.slice(0, 500)}`));
+    proc.on("close", (code, signal) => {
+      if (code !== 0 || signal) {
+        const reason = signal ? `killed by signal ${signal}` : `exit code ${code}`;
+        reject(new Error(`Python process ${reason}: ${stderr.slice(0, 500)}`));
         return;
       }
       try {
