@@ -1,6 +1,6 @@
 import { ReactNode } from "react";
 import { Link, useLocation } from "wouter";
-import { Layers, History, ScanLine, HardHat, Settings } from "lucide-react";
+import { Layers, History, ScanLine, HardHat, BookOpen, Settings } from "lucide-react";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
 
@@ -14,6 +14,7 @@ export function Layout({ children }: { children: ReactNode }) {
   const navItems = [
     { href: "/extract", label: "Extract Document", icon: ScanLine },
     { href: "/pdf-extract", label: "Construction PDF", icon: HardHat },
+    { href: "/spec-extract", label: "Specifications", icon: BookOpen },
     { href: "/schemas", label: "Document Schemas", icon: Layers },
     { href: "/history", label: "History", icon: History },
   ];

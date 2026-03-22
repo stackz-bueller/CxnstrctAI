@@ -70,6 +70,71 @@ export interface ExtractedField {
   present: boolean;
 }
 
+export interface SpecSubsection {
+  identifier: string;
+  title?: string | null;
+  content: string;
+}
+
+export interface SpecPart {
+  name: string;
+  subsections: SpecSubsection[];
+}
+
+export interface SpecSection {
+  section_number: string;
+  section_title: string;
+  division_number: string;
+  division_title: string;
+  page_start: number;
+  page_end: number;
+  parts: SpecPart[];
+  full_text: string;
+}
+
+export type SpecExtractionSummaryStatus =
+  (typeof SpecExtractionSummaryStatus)[keyof typeof SpecExtractionSummaryStatus];
+
+export const SpecExtractionSummaryStatus = {
+  processing: "processing",
+  completed: "completed",
+  failed: "failed",
+} as const;
+
+export interface SpecExtractionSummary {
+  id: number;
+  fileName: string;
+  status: SpecExtractionSummaryStatus;
+  totalPages: number;
+  projectName?: string | null;
+  processingTimeMs: number;
+  errorMessage?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type SpecExtractionDetailStatus =
+  (typeof SpecExtractionDetailStatus)[keyof typeof SpecExtractionDetailStatus];
+
+export const SpecExtractionDetailStatus = {
+  processing: "processing",
+  completed: "completed",
+  failed: "failed",
+} as const;
+
+export interface SpecExtractionDetail {
+  id: number;
+  fileName: string;
+  status: SpecExtractionDetailStatus;
+  totalPages: number;
+  projectName?: string | null;
+  processingTimeMs: number;
+  errorMessage?: string | null;
+  sections: SpecSection[];
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface ConstructionTitleBlock {
   project_name?: string | null;
   drawing_title?: string | null;
@@ -196,6 +261,10 @@ export type ListExtractions200 = {
 
 export type ListPdfExtractions200 = {
   extractions: PdfExtractionSummary[];
+};
+
+export type ListSpecExtractions200 = {
+  extractions: SpecExtractionSummary[];
 };
 
 export type GetExtractionRawText200 = {

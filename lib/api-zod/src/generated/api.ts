@@ -279,6 +279,67 @@ export const GetPdfExtractionResponse = zod.object({
 });
 
 /**
+ * @summary List all spec extractions
+ */
+export const ListSpecExtractionsResponse = zod.object({
+  extractions: zod.array(
+    zod.object({
+      id: zod.number(),
+      fileName: zod.string(),
+      status: zod.enum(["processing", "completed", "failed"]),
+      totalPages: zod.number(),
+      projectName: zod.string().nullish(),
+      processingTimeMs: zod.number(),
+      errorMessage: zod.string().nullish(),
+      createdAt: zod.date(),
+      updatedAt: zod.date(),
+    }),
+  ),
+});
+
+/**
+ * @summary Get a spec extraction with full section data
+ */
+export const GetSpecExtractionParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const GetSpecExtractionResponse = zod.object({
+  id: zod.number(),
+  fileName: zod.string(),
+  status: zod.enum(["processing", "completed", "failed"]),
+  totalPages: zod.number(),
+  projectName: zod.string().nullish(),
+  processingTimeMs: zod.number(),
+  errorMessage: zod.string().nullish(),
+  sections: zod.array(
+    zod.object({
+      section_number: zod.string(),
+      section_title: zod.string(),
+      division_number: zod.string(),
+      division_title: zod.string(),
+      page_start: zod.number(),
+      page_end: zod.number(),
+      parts: zod.array(
+        zod.object({
+          name: zod.string(),
+          subsections: zod.array(
+            zod.object({
+              identifier: zod.string(),
+              title: zod.string().nullish(),
+              content: zod.string(),
+            }),
+          ),
+        }),
+      ),
+      full_text: zod.string(),
+    }),
+  ),
+  createdAt: zod.date(),
+  updatedAt: zod.date(),
+});
+
+/**
  * @summary Get raw OCR text for an extraction
  */
 export const GetExtractionRawTextParams = zod.object({

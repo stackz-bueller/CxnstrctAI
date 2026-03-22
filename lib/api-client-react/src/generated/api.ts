@@ -28,7 +28,9 @@ import type {
   ListExtractionsParams,
   ListPdfExtractions200,
   ListSchemas200,
+  ListSpecExtractions200,
   PdfExtractionDetail,
+  SpecExtractionDetail,
 } from "./api.schemas";
 
 import { customFetch } from "../custom-fetch";
@@ -784,6 +786,168 @@ export function useGetPdfExtraction<
   },
 ): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
   const queryOptions = getGetPdfExtractionQueryOptions(id, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary List all spec extractions
+ */
+export const getListSpecExtractionsUrl = () => {
+  return `/api/spec-extractions`;
+};
+
+export const listSpecExtractions = async (
+  options?: RequestInit,
+): Promise<ListSpecExtractions200> => {
+  return customFetch<ListSpecExtractions200>(getListSpecExtractionsUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getListSpecExtractionsQueryKey = () => {
+  return [`/api/spec-extractions`] as const;
+};
+
+export const getListSpecExtractionsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listSpecExtractions>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listSpecExtractions>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getListSpecExtractionsQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listSpecExtractions>>
+  > = ({ signal }) => listSpecExtractions({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listSpecExtractions>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListSpecExtractionsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listSpecExtractions>>
+>;
+export type ListSpecExtractionsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary List all spec extractions
+ */
+
+export function useListSpecExtractions<
+  TData = Awaited<ReturnType<typeof listSpecExtractions>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listSpecExtractions>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListSpecExtractionsQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Get a spec extraction with full section data
+ */
+export const getGetSpecExtractionUrl = (id: number) => {
+  return `/api/spec-extractions/${id}`;
+};
+
+export const getSpecExtraction = async (
+  id: number,
+  options?: RequestInit,
+): Promise<SpecExtractionDetail> => {
+  return customFetch<SpecExtractionDetail>(getGetSpecExtractionUrl(id), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetSpecExtractionQueryKey = (id: number) => {
+  return [`/api/spec-extractions/${id}`] as const;
+};
+
+export const getGetSpecExtractionQueryOptions = <
+  TData = Awaited<ReturnType<typeof getSpecExtraction>>,
+  TError = ErrorType<ApiError>,
+>(
+  id: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getSpecExtraction>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetSpecExtractionQueryKey(id);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getSpecExtraction>>
+  > = ({ signal }) => getSpecExtraction(id, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getSpecExtraction>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetSpecExtractionQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getSpecExtraction>>
+>;
+export type GetSpecExtractionQueryError = ErrorType<ApiError>;
+
+/**
+ * @summary Get a spec extraction with full section data
+ */
+
+export function useGetSpecExtraction<
+  TData = Awaited<ReturnType<typeof getSpecExtraction>>,
+  TError = ErrorType<ApiError>,
+>(
+  id: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getSpecExtraction>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetSpecExtractionQueryOptions(id, options);
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;

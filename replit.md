@@ -74,6 +74,24 @@ A second dedicated pipeline for construction engineering documents (PDFs):
 
 **Script:** `scripts/pdf_processor.py` — spawned as a child process by the Node.js route. Takes `<pdf_path> <ai_base_url> <ai_api_key>`, outputs JSON to stdout.
 
+### Specification Extraction Pipeline
+
+A third pipeline designed specifically for CSI-format specification PDFs (letter-size text documents):
+
+1. **Direct text extraction**: pdfplumber reads each page's text directly — no OCR, no vision, no image conversion. Much faster and more accurate than the drawing pipeline for text PDFs.
+2. **CSI structure parsing**: Regex detects `SECTION XXXXXX – Title` headers across the full document to identify section boundaries.
+3. **Division grouping**: Section numbers are mapped to their CSI MasterFormat division (01 General Requirements, 03 Concrete, 22 Plumbing, etc.)
+4. **Part/subsection parsing**: Each section is split into PART 1 GENERAL / PART 2 PRODUCTS / PART 3 EXECUTION, and subsections (1.01, 1.02, A, B, etc.) are extracted with their content.
+5. **AI structuring**: First 20 sections are sent to GPT-4o (text only) for structured requirement extraction. Remaining sections use regex-only parsing.
+6. **Project name detection**: Heuristic regex on the first 3 pages to find the project name.
+
+**Tested results:**
+- Wyoming Complex (337p, 5.2MB) → 60 sections, 11 divisions, 130s
+- Stone Arches (685p, 42MB) → 62 sections, 9 divisions, 136s
+- Fern Rock (281p, 39MB) → 7 sections (small project), 1 division, 76s
+
+**Script:** `scripts/spec_processor.py` — spawned as a child process by the Node.js route. MAX_PAGES=1200, MAX_SECTIONS=20 (GPT-structured), regex-only for the rest.
+
 ### API Endpoints
 
 - `GET /api/schemas` — list schemas
@@ -87,6 +105,9 @@ A second dedicated pipeline for construction engineering documents (PDFs):
 - `GET /api/pdf-extractions` — list all construction PDF extractions
 - `GET /api/pdf-extractions/:id` — get full extraction with per-page results
 - `POST /api/pdf-extractions/upload` — upload a construction PDF (starts async pipeline, returns immediately)
+- `GET /api/spec-extractions` — list all spec extractions (summary, no sections)
+- `GET /api/spec-extractions/:id` — get full extraction with sections array
+- `POST /api/spec-extractions/upload` — upload a spec PDF (starts async pipeline, returns immediately)
 
 ## TypeScript & Composite Projects
 
@@ -132,6 +153,7 @@ React + Vite frontend. Pages:
 - `document_schemas` table — schema definitions with JSONB fields
 - `extractions` table — extraction results with JSONB field values
 - `construction_extractions` table — per-PDF extraction records with JSONB pages array
+- `spec_extractions` table — per-spec extraction records with JSONB sections array (section_number, section_title, division, parts, subsections, full_text)
 
 ### `lib/api-spec` (`@workspace/api-spec`)
 
