@@ -74,6 +74,8 @@ A second dedicated pipeline for construction engineering documents (PDFs):
 
 **Script:** `scripts/pdf_processor.py` — spawned as a child process by the Node.js route. Takes `<pdf_path> <ai_base_url> <ai_api_key>`, outputs JSON to stdout.
 
+**Re-extraction script:** `scripts/reextract_page.py` — targeted single-page re-extraction with crop support, pipe diameter validation, DB apply mode, and audit logging. Supports `--crop` (manual coordinates), `--crop-preset` (named presets like `center-right`), `--apply --extraction-id N` (direct DB update), `--purge-tables` (remove hallucinated tables). Writes audit JSON to `.local/extraction_audits/`.
+
 ### Specification Extraction Pipeline
 
 A third pipeline designed specifically for CSI-format specification PDFs (letter-size text documents):
