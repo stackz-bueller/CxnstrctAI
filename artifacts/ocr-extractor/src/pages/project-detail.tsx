@@ -105,6 +105,7 @@ export default function ProjectDetailPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [chatLoading, setChatLoading] = useState(false);
   const [question, setQuestion] = useState("");
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
   const chatBottomRef = useRef<HTMLDivElement>(null);
 
   const [showAddDoc, setShowAddDoc] = useState(false);
@@ -153,8 +154,9 @@ export default function ProjectDetailPage() {
   }, [pollingActive, fetchProject]);
 
   useEffect(() => {
-    chatBottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+    const el = messagesContainerRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [messages, chatLoading]);
 
   async function loadAvailableDocs() {
     setDocsLoading(true);
@@ -489,7 +491,7 @@ export default function ProjectDetailPage() {
           </div>
 
           {/* Messages */}
-          <div className="flex-1 overflow-y-auto p-4 space-y-4 min-h-0">
+          <div ref={messagesContainerRef} className="flex-1 overflow-y-auto p-4 space-y-4 min-h-0">
             {messages.length === 0 && (
               <div className="space-y-4">
                 <div className="text-center py-6">

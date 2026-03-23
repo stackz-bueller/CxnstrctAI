@@ -262,6 +262,14 @@ export async function indexProjectDocument(
   }
 }
 
+const STOP_WORDS = new Set([
+  "the", "is", "are", "was", "were", "for", "and", "that", "this", "with",
+  "from", "what", "how", "can", "does", "did", "has", "have", "will", "not",
+  "but", "its", "any", "all", "out", "get", "use", "our", "you", "his",
+  "her", "they", "them", "who", "him", "she", "her", "which", "when",
+  "then", "than", "into", "more", "also", "been", "each", "about", "per",
+]);
+
 /**
  * Full-text search using PostgreSQL tsvector/tsquery.
  * Extracts meaningful keywords from the question and ranks chunks by relevance.
@@ -271,12 +279,13 @@ export async function keywordSearch(
   question: string,
   topK = 10,
 ): Promise<Array<{ content: string; sectionLabel: string | null; documentName: string; documentType: string; score: number }>> {
-  // Build a tsquery from the question words (filter out short stop-words)
+  // Build a tsquery from the question words — strip stop words so PostgreSQL
+  // doesn't see stemmed-away tokens with :* suffixes, which silently kill results
   const words = question
     .toLowerCase()
     .replace(/[^a-z0-9\s]/g, " ")
     .split(/\s+/)
-    .filter((w) => w.length >= 3)
+    .filter((w) => w.length >= 3 && !STOP_WORDS.has(w))
     .slice(0, 20);
 
   if (words.length === 0) return [];
@@ -308,8 +317,9 @@ export async function keywordSearch(
   `);
 
   if (results.rows.length === 0) {
-    // Fallback: ILIKE search on individual keywords if full-text finds nothing
-    const likePattern = words.slice(0, 5).join("%");
+    // Fallback: ILIKE search — each keyword independently (OR logic), ranked by
+    // how many keywords appear in the chunk
+    const topWords = words.slice(0, 6);
     const fallback = await db.execute<{
       id: number;
       content: string;
@@ -320,10 +330,22 @@ export async function keywordSearch(
       SELECT id, content, section_label, document_type, project_document_id
       FROM document_chunks
       WHERE project_id = ${projectId}
-        AND content ILIKE ${"%" + words.slice(0, 3).join("%") + "%"}
-      LIMIT ${topK}
+        AND (${sql.join(
+          topWords.map((w) => sql`content ILIKE ${"%" + w + "%"}`),
+          sql` OR `,
+        )})
+      LIMIT ${topK * 3}
     `);
-    results.rows.push(...fallback.rows.map((r) => ({ ...r, rank: 0.1 })));
+    // rank by count of matching keywords in the chunk
+    const ranked = fallback.rows
+      .map((r) => {
+        const lower = r.content.toLowerCase();
+        const hits = topWords.filter((w) => lower.includes(w)).length;
+        return { ...r, rank: hits / topWords.length };
+      })
+      .sort((a, b) => b.rank - a.rank)
+      .slice(0, topK);
+    results.rows.push(...ranked);
   }
 
   const docIds = [...new Set(results.rows.map((r) => r.project_document_id))];
