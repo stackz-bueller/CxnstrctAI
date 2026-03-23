@@ -67,10 +67,10 @@ A second dedicated pipeline for construction engineering documents (PDFs):
 2. **OpenCV Preprocessing**: Adaptive threshold to clean noise and sharpen text for Tesseract
 3. **Targeted OCR**: Regional Tesseract OCR on title block (bottom-right), revision block (upper-right), and full page
 4. **Legend/Callout Detection**: OpenCV contour detection to find bordered boxes and annotation patterns
-5. **3×3 Vision Tiling**: Each page split into 9 overlapping tiles, each sent to GPT-4o Vision for structured extraction
-6. **Merge**: OCR and vision results merged — vision takes priority, OCR fills gaps
+5. **2×2 Vision Tiling**: Each page split into 4 overlapping tiles (12% overlap), each sent to GPT-4o Vision (max 8192 response tokens, 1800px images) for structured extraction including explicit table capture
+6. **Merge**: OCR and vision results merged — vision takes priority, OCR fills gaps. Table data is flattened into all_text for full-text search.
 
-**Extracted fields per page:** Title block (project name, drawing title, sheet number, revision, date, drawn by, scale), revision history table, general notes, callouts, legends/symbols, full raw text.
+**Extracted fields per page:** Title block (project name, drawing title, sheet number, revision, date, drawn by, scale), revision history table, general notes, **tables** (compaction density, material schedules, pipe schedules, etc. with headers/rows/raw_text), callouts, legends/symbols, full raw text.
 
 **Script:** `scripts/pdf_processor.py` — spawned as a child process by the Node.js route. Takes `<pdf_path> <ai_base_url> <ai_api_key>`, outputs JSON to stdout.
 
@@ -99,9 +99,9 @@ A project-scoped AI assistant that answers questions only from indexed project d
 **How it works:**
 1. Create a project (e.g. "Wyoming Complex")
 2. Assign completed extractions (specs, drawings, financials, OCR) to the project
-3. Each document is automatically chunked and embedded using a local `all-MiniLM-L6-v2` ONNX model (22MB, runs via `onnxruntime-node` with a pure-JS WordPiece tokenizer — no external API or `sharp` dependency)
+3. Each document is automatically chunked (1500-char max with sentence-boundary splitting and 150-char overlap) and embedded using a local `all-MiniLM-L6-v2` ONNX model (22MB, runs via `onnxruntime-node` with a pure-JS WordPiece tokenizer — no external API or `sharp` dependency). Table data gets its own dedicated chunks.
 4. Embeddings stored in PostgreSQL as `vector(384)` using pgvector extension with a cosine IVFFlat index
-5. When a question is asked, it's embedded, top-K semantically similar chunks are retrieved (pgvector cosine similarity), and GPT-4o answers using only those chunks as context — no outside knowledge
+5. When a question is asked, it's embedded, hybrid RRF search (vector + FTS in parallel, merged via Reciprocal Rank Fusion) retrieves top-15 chunks, and GPT-4o answers using only those chunks as context — no outside knowledge
 6. Chat history is stored per project; each project is fully isolated
 
 **Anti-hallucination:** If no relevant chunks exceed a similarity threshold (0.25), the AI explicitly says it cannot find the answer rather than guessing.

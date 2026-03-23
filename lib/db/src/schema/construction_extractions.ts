@@ -29,12 +29,20 @@ export const constructionLegendSchema = z.object({
   description: z.string(),
 });
 
+export const constructionTableSchema = z.object({
+  title: z.string().optional(),
+  headers: z.array(z.string()).optional(),
+  rows: z.array(z.array(z.string())).optional(),
+  raw_text: z.string().optional(),
+});
+
 export const constructionPageResultSchema = z.object({
   page_number: z.number(),
   extraction_method: z.string(),
   title_block: constructionTitleBlockSchema,
   revision_history: z.array(constructionRevisionSchema),
   general_notes: z.array(z.string()),
+  tables: z.array(constructionTableSchema).optional().default([]),
   callouts: z.array(constructionCalloutSchema),
   legends: z.array(constructionLegendSchema),
   all_text: z.string(),

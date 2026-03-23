@@ -41,8 +41,9 @@ MAX_PAGES = 150          # Process up to 150 pages — covers most full drawing 
 DPI = 100                # 100 DPI — enough for large-format engineering drawings
 MAX_OCR_WIDTH = 1600     # Downscale images wider than this before Tesseract
 TILE_GRID = (2, 2)       # 2×2 = 4 tiles per page
-TILE_OVERLAP = 0.08      # 8% overlap between tiles
-VISION_MAX_PX = 1200     # Max width for vision images sent to GPT-4o
+TILE_OVERLAP = 0.12      # 12% overlap between tiles — prevents boundary content loss
+VISION_MAX_PX = 1800     # Max width for vision images sent to GPT-4o
+VISION_MAX_TOKENS = 8192 # Response token limit for GPT-4o — captures full tables and specs
 
 
 def get_page_count(pdf_path: str) -> int:
@@ -179,7 +180,7 @@ def pil_to_base64(img: Image.Image, max_width: int = VISION_MAX_PX) -> str:
     return base64.b64encode(buf.getvalue()).decode("utf-8")
 
 
-VISION_PROMPT = """You are a construction drawing analyst. Extract all readable text and structured data from this section of an engineering drawing.
+VISION_PROMPT = """You are a construction drawing analyst. Extract ALL readable text and structured data from this section of an engineering drawing. Be exhaustive — do not skip or summarize anything.
 
 Return JSON with exactly this structure:
 {
@@ -196,20 +197,31 @@ Return JSON with exactly this structure:
   "revision_history": [
     { "rev_number": null, "date": null, "description": null }
   ],
-  "general_notes": ["list of note text"],
+  "general_notes": ["list of note text — include the FULL text of each note, never truncate"],
+  "tables": [
+    {
+      "title": "table heading",
+      "headers": ["col1", "col2"],
+      "rows": [["val1", "val2"]],
+      "raw_text": "full table rendered as plain text"
+    }
+  ],
   "callouts": [
     { "text": "", "type": "detail_ref | section_cut | note | grid | annotation" }
   ],
   "legends": [
     { "symbol": "", "description": "" }
   ],
-  "all_text": "all visible text in reading order"
+  "all_text": "ALL visible text in reading order — include complete table contents, every note in full, all dimensions, all specifications"
 }
 
 Rules:
-- Extract exactly what is visible — do not infer or guess
+- Extract EVERY piece of visible text — do not summarize, abbreviate, or skip anything
 - Return null for title_block fields not visible; return empty arrays for missing lists
-- Include every note, callout, and label you can read
+- Include every note, callout, label, dimension, specification, and table you can read
+- TABLES ARE CRITICAL: Extract ALL tables completely — compaction density tables, material schedules, dimension tables, pipe schedules, quantity tables. Include every row, column header, and cell value
+- Include all percentages, densities, strengths (PSI), dimensions, and numerical specifications
+- Include all references to standards (PennDOT, ASTM, AASHTO, ACI, etc.) with their full section numbers
 - confidence: 0.0-1.0 based on how clearly title block info is present"""
 
 
@@ -220,6 +232,7 @@ def vision_extract(client: OpenAI, img: Image.Image) -> dict:
         "title_block": {k: None for k in ["project_name","drawing_title","sheet_number","revision","date","drawn_by","scale","confidence"]},
         "revision_history": [],
         "general_notes": [],
+        "tables": [],
         "callouts": [],
         "legends": [],
         "all_text": ""
@@ -227,7 +240,7 @@ def vision_extract(client: OpenAI, img: Image.Image) -> dict:
     try:
         response = client.chat.completions.create(
             model="gpt-4o",
-            max_tokens=2048,
+            max_tokens=VISION_MAX_TOKENS,
             messages=[{
                 "role": "user",
                 "content": [
@@ -239,9 +252,12 @@ def vision_extract(client: OpenAI, img: Image.Image) -> dict:
         content = response.choices[0].message.content or ""
         json_match = re.search(r'\{[\s\S]*\}', content)
         if json_match:
-            return json.loads(json_match.group())
-    except Exception:
-        pass
+            result = json.loads(json_match.group())
+            if "tables" not in result:
+                result["tables"] = []
+            return result
+    except Exception as e:
+        print(f"Vision extract error: {e}", file=sys.stderr)
     return empty
 
 
@@ -255,6 +271,22 @@ def merge_results(ocr_data: dict, vision_data: dict) -> dict:
         merged["all_text"] = vision_text + "\n\n[OCR]\n" + ocr_full_text
     else:
         merged["all_text"] = vision_text
+
+    # Append table content to all_text so it's always searchable
+    tables = merged.get("tables") or []
+    if tables:
+        table_lines = []
+        for t in tables:
+            if t.get("title"):
+                table_lines.append(f"\nTable: {t['title']}")
+            if t.get("raw_text"):
+                table_lines.append(t["raw_text"])
+            elif t.get("headers") and t.get("rows"):
+                table_lines.append(" | ".join(t["headers"]))
+                for row in t["rows"]:
+                    table_lines.append(" | ".join(str(v) for v in row))
+        if table_lines:
+            merged["all_text"] = merged["all_text"] + "\n\n" + "\n".join(table_lines)
 
     # Merge OCR callouts vision may have missed
     ocr_callouts = ocr_data.get("callouts", [])
@@ -322,16 +354,20 @@ def process_page(page_num: int, pdf_path: str, client: OpenAI) -> dict:
         "title_block": None,
         "revision_history": [],
         "general_notes": [],
+        "tables": [],
         "callouts": [],
         "legends": [],
         "all_text": "",
     }
 
+    seen_rev_keys: set[str] = set()
     seen_notes: set[str] = set()
     seen_callout_texts: set[str] = set()
     seen_legend_syms: set[str] = set()
+    seen_table_titles: set[str] = set()
+    all_text_parts: list[str] = []
 
-    for _, tile_img in tiles:
+    for tile_name, tile_img in tiles:
         tr = vision_extract(client, tile_img)
         del tile_img
         gc.collect()
@@ -347,15 +383,23 @@ def process_page(page_num: int, pdf_path: str, client: OpenAI) -> dict:
 
         for rev in tr.get("revision_history") or []:
             key = str(rev.get("rev_number")) + str(rev.get("date"))
-            if key not in seen_notes:
-                seen_notes.add(key)
+            if key not in seen_rev_keys:
+                seen_rev_keys.add(key)
                 merged_vision["revision_history"].append(rev)
 
         for note in tr.get("general_notes") or []:
-            nk = note.strip().lower()[:60]
+            nk = note.strip().lower()
             if nk not in seen_notes and note.strip():
                 seen_notes.add(nk)
                 merged_vision["general_notes"].append(note)
+
+        for table in tr.get("tables") or []:
+            tkey = str(table.get("title", "")).strip().lower()
+            if tkey and tkey not in seen_table_titles:
+                seen_table_titles.add(tkey)
+                merged_vision["tables"].append(table)
+            elif not tkey:
+                merged_vision["tables"].append(table)
 
         for c in tr.get("callouts") or []:
             ct = str(c.get("text", "")).strip().lower()
@@ -369,9 +413,11 @@ def process_page(page_num: int, pdf_path: str, client: OpenAI) -> dict:
                 seen_legend_syms.add(sym)
                 merged_vision["legends"].append(leg)
 
-        tile_text = tr.get("all_text") or ""
-        if tile_text.strip() and tile_text.strip() not in merged_vision["all_text"]:
-            merged_vision["all_text"] += (" " if merged_vision["all_text"] else "") + tile_text.strip()
+        tile_text = (tr.get("all_text") or "").strip()
+        if tile_text:
+            all_text_parts.append(tile_text)
+
+    merged_vision["all_text"] = "\n".join(all_text_parts)
 
     if merged_vision["title_block"] is None:
         merged_vision["title_block"] = {k: None for k in ["project_name","drawing_title","sheet_number","revision","date","drawn_by","scale","confidence"]}
@@ -384,6 +430,7 @@ def process_page(page_num: int, pdf_path: str, client: OpenAI) -> dict:
         "title_block": final.get("title_block"),
         "revision_history": final.get("revision_history") or [],
         "general_notes": final.get("general_notes") or [],
+        "tables": final.get("tables") or [],
         "callouts": final.get("callouts") or [],
         "legends": final.get("legends") or [],
         "all_text": final.get("all_text") or "",

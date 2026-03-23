@@ -13,18 +13,33 @@ import {
 import { eq, and, sql } from "drizzle-orm";
 import { embed } from "../../lib/embedder.js";
 
-const MAX_CHUNK_CHARS = 900;
+const MAX_CHUNK_CHARS = 1500;
+const CHUNK_OVERLAP = 150;
 const DB_BATCH_SIZE = 30;
 
 function makeChunks(text: string, label: string): Array<{ content: string; sectionLabel: string }> {
   const t = text.trim();
   if (!t) return [];
   if (t.length <= MAX_CHUNK_CHARS) return [{ content: t, sectionLabel: label }];
+
   const chunks: Array<{ content: string; sectionLabel: string }> = [];
   let start = 0;
   while (start < t.length) {
-    chunks.push({ content: t.slice(start, start + MAX_CHUNK_CHARS), sectionLabel: label });
-    start += MAX_CHUNK_CHARS - 100;
+    let end = Math.min(start + MAX_CHUNK_CHARS, t.length);
+    if (end < t.length) {
+      const window = t.slice(Math.max(start + MAX_CHUNK_CHARS - 200, start), end);
+      const sentenceEnd = window.lastIndexOf(". ");
+      if (sentenceEnd > 0) {
+        end = Math.max(start + MAX_CHUNK_CHARS - 200, start) + sentenceEnd + 2;
+      } else {
+        const newlineEnd = window.lastIndexOf("\n");
+        if (newlineEnd > 0) {
+          end = Math.max(start + MAX_CHUNK_CHARS - 200, start) + newlineEnd + 1;
+        }
+      }
+    }
+    chunks.push({ content: t.slice(start, end), sectionLabel: label });
+    start = Math.max(start + 1, end - CHUNK_OVERLAP);
   }
   return chunks;
 }
@@ -134,6 +149,23 @@ async function indexConstruction(
 
     if (page.general_notes.length > 0) {
       pending.push(...makeChunks(`${label} – General Notes:\n${page.general_notes.join("\n")}`, label));
+    }
+    const tables = page.tables;
+    if (tables && tables.length > 0) {
+      for (const table of tables) {
+        let tableText = table.title ? `Table: ${table.title}\n` : "";
+        if (table.raw_text) {
+          tableText += table.raw_text;
+        } else if (table.headers && table.rows) {
+          tableText += table.headers.join(" | ") + "\n";
+          for (const row of table.rows) {
+            tableText += row.join(" | ") + "\n";
+          }
+        }
+        if (tableText.trim()) {
+          pending.push(...makeChunks(`${label} – Table Data:\n${tableText}`, label));
+        }
+      }
     }
     if (page.callouts.length > 0) {
       const calloutText = page.callouts.map((c) => `[${c.type}] ${c.text}`).join("\n");
