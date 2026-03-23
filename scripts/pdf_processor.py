@@ -37,7 +37,7 @@ from pytesseract import Output
 import pdf2image
 from openai import OpenAI
 
-MAX_PAGES = 5            # Process at most 5 pages (large-format drawings are expensive)
+MAX_PAGES = 150          # Process up to 150 pages — covers most full drawing sets
 DPI = 100                # 100 DPI — enough for large-format engineering drawings
 MAX_OCR_WIDTH = 1600     # Downscale images wider than this before Tesseract
 TILE_GRID = (2, 2)       # 2×2 = 4 tiles per page

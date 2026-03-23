@@ -122,8 +122,7 @@ async function indexConstruction(
       pending.push(...makeChunks(`${label} – Callouts:\n${calloutText}`, label));
     }
     if (page.all_text) {
-      const trimmed = page.all_text.slice(0, MAX_CHUNK_CHARS * 3);
-      pending.push(...makeChunks(`${label} – Full Text:\n${trimmed}`, label));
+      pending.push(...makeChunks(`${label} – Full Text:\n${page.all_text}`, label));
     }
 
     if (pending.length > 0) {
