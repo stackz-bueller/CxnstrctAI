@@ -44,7 +44,7 @@ DPI = 100                # 100 DPI — enough for large-format engineering drawi
 MAX_OCR_WIDTH = 1600     # Downscale images wider than this before Tesseract
 TILE_GRID = (2, 2)       # 2×2 = 4 tiles per page
 TILE_OVERLAP = 0.12      # 12% overlap between tiles — prevents boundary content loss
-VISION_MAX_PX = 1400     # Max width for vision images sent to GPT-4o (full page)
+VISION_MAX_PX = 2000     # Max width for vision images sent to GPT-4o (full page)
 VISION_MAX_TOKENS = 4096 # Response token limit for GPT-4o (full page, single call)
 MIN_OCR_CHARS_FOR_VISION = 100  # Skip vision if OCR text shorter than this (nearly blank page)
 
@@ -223,6 +223,8 @@ Rules:
 - Return null for title_block fields not visible; return empty arrays for missing lists
 - Include every note, callout, label, dimension, specification, and table you can read
 - TABLES ARE CRITICAL: Extract ALL tables completely — compaction density tables, material schedules, dimension tables, pipe schedules, quantity tables. Include every row, column header, and cell value
+- NUMERICAL ACCURACY IS CRITICAL: Read each number carefully. Pipe diameters are typically 12", 15", 18", 24", 30", 36", 42", 48" — not arbitrary values like 13 or 17. Double-check every number against the actual text in the image
+- Pipe IDs follow phase conventions (P1-xx for Phase 1, P2-xx for Phase 2, etc.) — preserve the exact ID as written
 - Include all percentages, densities, strengths (PSI), dimensions, and numerical specifications
 - Include all references to standards (PennDOT, ASTM, AASHTO, ACI, etc.) with their full section numbers
 - confidence: 0.0-1.0 based on how clearly title block info is present"""

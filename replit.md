@@ -113,11 +113,17 @@ A project-scoped AI assistant that answers questions only from indexed project d
 
 **Embedding model files:** `artifacts/api-server/models/model.onnx` + `tokenizer.json`
 
+**Data accuracy corrections applied to Wyoming Plans extraction (id=2):**
+- Page 42 (C-509): Tables replaced with targeted-crop re-extraction. P2-01 = 24" (was incorrectly 17"), all P1-xx = 12" to DB1, P2-xx correctly linked to DB2/DB3. Old garbled `all_text` replaced with clean summary.
+- Pages 13 (C-101), 14 (C-101A), 16 (C-102): Hallucinated detention basin tables removed — these are site plans, not data sheets. The vision model invented tables from parking lot grid lines.
+- Phase naming: P1-xx = Phase 1 (DB1), P2-xx = Phase 2 (DB2), P3-xx = Phase 3 (DB3). Standard pipe sizes: 12, 15, 18, 24, 30, 36, 42, 48 inches.
+
 **Critical notes:**
 - Replit AI proxy does NOT support `/embeddings` endpoint — only chat completions. All embedding is done locally.
 - `@xenova/transformers` is installed but broken (`sharp` native binary not compiled) — do NOT use it. Use `embedder.ts` instead.
 - On startup, a background backfill runs to generate embeddings for any chunks that are missing them.
 - Max pages per PDF: 150 (raised from original 5 to capture full documents)
+- Vision model accuracy issues: Full-page extraction can misread numbers (17" vs 24") and hallucinate tables from graphical elements. Targeted small crops (center-right, 50-85% width) produce more accurate results for dense tabular pages.
 
 **Key files:**
 - `artifacts/api-server/src/lib/embedder.ts` — local ONNX embedding with WordPiece tokenizer

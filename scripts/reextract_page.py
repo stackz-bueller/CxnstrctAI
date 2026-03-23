@@ -45,7 +45,13 @@ Return JSON:
   "callouts": ["labels, annotations, callouts found"]
 }
 
-Be thorough — do not skip any table even if partially visible. Extract every number, percentage, and specification value you can read."""
+Be thorough — do not skip any table even if partially visible. Extract every number, percentage, and specification value you can read.
+
+NUMERICAL ACCURACY IS CRITICAL:
+- Pipe diameters are standard sizes: 12", 15", 18", 24", 30", 36", 42", 48" — never arbitrary values like 13 or 17
+- Pipe IDs follow phase conventions: P1-xx for Phase 1, P2-xx for Phase 2, etc.
+- Read each cell value carefully by looking at the actual characters in the image
+- Double-check every number before including it"""
 
 
 def pil_to_base64(img: Image.Image) -> str:
