@@ -393,12 +393,17 @@ def process_page(page_num: int, pdf_path: str, client: OpenAI) -> dict:
 
 def main():
     if len(sys.argv) < 4:
-        print(json.dumps({"error": "Usage: pdf_processor.py <pdf_path> <ai_base_url> <ai_api_key>"}))
+        print(json.dumps({"error": "Usage: pdf_processor.py <pdf_path> <ai_base_url> <ai_api_key> [start_page] [end_page] [--stream]"}))
         sys.exit(1)
 
     pdf_path = sys.argv[1]
     ai_base_url = sys.argv[2]
     ai_api_key = sys.argv[3]
+
+    # Optional: start_page, end_page, --stream flag
+    start_page_arg = int(sys.argv[4]) if len(sys.argv) > 4 else 1
+    end_page_arg = int(sys.argv[5]) if len(sys.argv) > 5 else None
+    streaming = "--stream" in sys.argv
 
     start_time = time.time()
     client = OpenAI(base_url=ai_base_url, api_key=ai_api_key)
@@ -409,16 +414,16 @@ def main():
         print(json.dumps({"error": f"Failed to read PDF: {str(e)}"}))
         sys.exit(1)
 
-    pages_to_process = min(total_pages, MAX_PAGES)
+    end_page = min(end_page_arg if end_page_arg else total_pages, MAX_PAGES, total_pages)
+    pages_to_process = range(start_page_arg, end_page + 1)
     results = []
 
-    for i in range(1, pages_to_process + 1):
+    for i in pages_to_process:
         try:
             page_result = process_page(i, pdf_path, client)
-            results.append(page_result)
             gc.collect()
         except Exception as e:
-            results.append({
+            page_result = {
                 "page_number": i,
                 "extraction_method": "ocr+vision",
                 "title_block": {k: None for k in ["project_name","drawing_title","sheet_number","revision","date","drawn_by","scale","confidence"]},
@@ -429,14 +434,25 @@ def main():
                 "all_text": "",
                 "ocr_confidence": 0.0,
                 "error": str(e),
-            })
+            }
+
+        if streaming:
+            # Emit each page immediately so the caller can save progress
+            print(json.dumps({"type": "page", "total_pages": total_pages, "page": page_result}), flush=True)
+        else:
+            results.append(page_result)
 
     processing_time_ms = int((time.time() - start_time) * 1000)
-    print(json.dumps({
-        "total_pages": total_pages,
-        "processing_time_ms": processing_time_ms,
-        "pages": results,
-    }))
+
+    if streaming:
+        # Final summary line
+        print(json.dumps({"type": "done", "total_pages": total_pages, "processing_time_ms": processing_time_ms}), flush=True)
+    else:
+        print(json.dumps({
+            "total_pages": total_pages,
+            "processing_time_ms": processing_time_ms,
+            "pages": results,
+        }))
 
 
 if __name__ == "__main__":
