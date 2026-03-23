@@ -67,8 +67,8 @@ A second dedicated pipeline for construction engineering documents (PDFs):
 2. **OpenCV Preprocessing**: Adaptive threshold to clean noise and sharpen text for Tesseract
 3. **Targeted OCR**: Regional Tesseract OCR on title block (bottom-right), revision block (upper-right), and full page
 4. **Legend/Callout Detection**: OpenCV contour detection to find bordered boxes and annotation patterns
-5. **2×2 Vision Tiling**: Each page split into 4 overlapping tiles (12% overlap), each sent to GPT-4o Vision (max 8192 response tokens, 1800px images) for structured extraction including explicit table capture
-6. **Merge**: OCR and vision results merged — vision takes priority, OCR fills gaps. Table data is flattened into all_text for full-text search.
+5. **Single Full-Page Vision**: Each page sent as one image (max 1400px) to GPT-4o Vision (max 4096 response tokens) for structured extraction including explicit table capture. Pages with fewer than 100 OCR chars skip vision entirely (blank-page fast path). ~65-90s per page.
+6. **Merge**: OCR and vision results merged — vision takes priority, OCR fills gaps.
 
 **Extracted fields per page:** Title block (project name, drawing title, sheet number, revision, date, drawn by, scale), revision history table, general notes, **tables** (compaction density, material schedules, pipe schedules, etc. with headers/rows/raw_text), callouts, legends/symbols, full raw text.
 
@@ -101,10 +101,15 @@ A project-scoped AI assistant that answers questions only from indexed project d
 2. Assign completed extractions (specs, drawings, financials, OCR) to the project
 3. Each document is automatically chunked (1500-char max with sentence-boundary splitting and 150-char overlap) and embedded using a local `all-MiniLM-L6-v2` ONNX model (22MB, runs via `onnxruntime-node` with a pure-JS WordPiece tokenizer — no external API or `sharp` dependency). Table data gets its own dedicated chunks.
 4. Embeddings stored in PostgreSQL as `vector(384)` using pgvector extension with a cosine IVFFlat index
-5. When a question is asked, it's embedded, hybrid RRF search (vector + FTS in parallel, merged via Reciprocal Rank Fusion) retrieves top-15 chunks, and GPT-4o answers using only those chunks as context — no outside knowledge
+5. When a question is asked, it's embedded, **triple-source hybrid search** runs in parallel:
+   - **Vector search** (cosine similarity, weight 1.5x) — best for semantic matching
+   - **Full-text search** (PostgreSQL tsvector, weight 1.0x) — best for keyword matching
+   - **Identifier boost search** (weight 2.0x) — detects construction identifiers in the question (e.g., DB3, P2-03, C-508, ASTM D4632) and boosts chunks containing exact matches
+   
+   Results merged via Reciprocal Rank Fusion (RRF, k=60). Top-15 chunks passed to GPT-4o as context.
 6. Chat history is stored per project; each project is fully isolated
 
-**Anti-hallucination:** If no relevant chunks exceed a similarity threshold (0.25), the AI explicitly says it cannot find the answer rather than guessing.
+**Anti-hallucination:** If no relevant chunks are found, the AI explicitly says it cannot find the answer rather than guessing.
 
 **Embedding model files:** `artifacts/api-server/models/model.onnx` + `tokenizer.json`
 

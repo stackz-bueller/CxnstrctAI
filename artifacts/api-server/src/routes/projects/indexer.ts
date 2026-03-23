@@ -157,13 +157,13 @@ async function indexConstruction(
     if (tables && tables.length > 0) {
       for (const table of tables) {
         let tableText = table.title ? `Table: ${table.title}\n` : "";
-        if (table.raw_text) {
-          tableText += table.raw_text;
-        } else if (table.headers && table.rows) {
+        if (table.headers && table.rows && table.rows.length > 0) {
           tableText += table.headers.join(" | ") + "\n";
           for (const row of table.rows) {
             tableText += row.join(" | ") + "\n";
           }
+        } else if (table.raw_text) {
+          tableText += table.raw_text;
         }
         if (tableText.trim()) {
           pending.push(...makeChunks(`${label} – Table Data:\n${tableText}`, label));
@@ -328,6 +328,8 @@ const STOP_WORDS = new Set([
   "but", "its", "any", "all", "out", "get", "use", "our", "you", "his",
   "her", "they", "them", "who", "him", "she", "her", "which", "when",
   "then", "than", "into", "more", "also", "been", "each", "about", "per",
+  "type", "used", "many", "much", "where", "there", "would", "could",
+  "should", "tell", "give", "show", "list", "find", "know", "need",
 ]);
 
 async function getDocMap(projectId: number): Promise<Map<number, string>> {
@@ -447,6 +449,53 @@ async function ftsSearch(projectId: number, question: string, topK: number): Pro
   }));
 }
 
+function extractIdentifiers(question: string): string[] {
+  const matches = question.match(/\b[A-Za-z]{1,4}[-]?\d+[A-Za-z]?\b/g) || [];
+  const cleaned = [...new Set(matches.map((m) => m.toUpperCase()))];
+  return cleaned.filter((id) => id.length >= 2);
+}
+
+async function identifierBoostSearch(
+  projectId: number,
+  identifiers: string[],
+  topK: number,
+): Promise<SearchRow[]> {
+  if (identifiers.length === 0) return [];
+  const conditions = identifiers.map(
+    (id) => sql`content ILIKE ${"%" + id + "%"}`,
+  );
+  const results = await db.execute<{
+    content: string;
+    section_label: string | null;
+    document_type: string;
+    project_document_id: number;
+  }>(sql`
+    SELECT content, section_label, document_type, project_document_id
+    FROM document_chunks
+    WHERE project_id = ${projectId}
+      AND (${sql.join(conditions, sql` OR `)})
+    LIMIT ${topK * 2}
+  `);
+  if (results.rows.length === 0) return [];
+  const docMap = await getDocMap(projectId);
+  return results.rows
+    .map((r) => {
+      const lower = r.content.toLowerCase();
+      const hits = identifiers.filter((id) =>
+        lower.includes(id.toLowerCase()),
+      ).length;
+      return {
+        content: r.content,
+        sectionLabel: r.section_label,
+        documentName: docMap.get(r.project_document_id) ?? "Unknown",
+        documentType: r.document_type,
+        score: hits / identifiers.length,
+      };
+    })
+    .sort((a, b) => b.score - a.score)
+    .slice(0, topK);
+}
+
 /**
  * Hybrid search: runs vector similarity search AND full-text search in
  * parallel, then merges results using Reciprocal Rank Fusion (RRF).
@@ -468,37 +517,49 @@ export async function keywordSearch(
   const FETCH_K = Math.max(topK * 3, 30);
   const RRF_K = 60;
 
+  const identifiers = extractIdentifiers(question);
+
   let vectorResults: SearchRow[] = [];
   let ftsResults: SearchRow[] = [];
+  let idResults: SearchRow[] = [];
+
+  const searches: Promise<void>[] = [];
 
   if (embeddedCount > 0) {
-    try {
-      [vectorResults, ftsResults] = await Promise.all([
+    searches.push(
+      Promise.all([
         vectorSearch(projectId, question, FETCH_K),
         ftsSearch(projectId, question, FETCH_K),
-      ]);
-    } catch (e) {
-      console.error("Hybrid search error, falling back to FTS only:", e);
-      ftsResults = await ftsSearch(projectId, question, FETCH_K);
-    }
+      ]).then(([v, f]) => { vectorResults = v; ftsResults = f; })
+        .catch((e) => {
+          console.error("Hybrid search error, falling back to FTS only:", e);
+          return ftsSearch(projectId, question, FETCH_K).then((f) => { ftsResults = f; });
+        }),
+    );
   } else {
-    ftsResults = await ftsSearch(projectId, question, FETCH_K);
+    searches.push(ftsSearch(projectId, question, FETCH_K).then((f) => { ftsResults = f; }));
   }
 
-  if (vectorResults.length === 0 && ftsResults.length === 0) return [];
+  if (identifiers.length > 0) {
+    searches.push(
+      identifierBoostSearch(projectId, identifiers, FETCH_K).then((r) => { idResults = r; }),
+    );
+  }
 
-  // If only one source returned results, use it directly
-  if (vectorResults.length === 0) return ftsResults.slice(0, topK);
-  if (ftsResults.length === 0) return vectorResults.slice(0, topK);
+  await Promise.all(searches);
 
-  // Build RRF score map keyed by content (first 120 chars as dedup key)
+  if (vectorResults.length === 0 && ftsResults.length === 0 && idResults.length === 0) return [];
+
   const scoreMap = new Map<string, { row: SearchRow; rrf: number }>();
-
   const key = (r: SearchRow) => r.content.slice(0, 120);
+
+  const VECTOR_WEIGHT = 1.5;
+  const FTS_WEIGHT = 1.0;
+  const ID_WEIGHT = 2.0;
 
   vectorResults.forEach((row, rank) => {
     const k = key(row);
-    const rrfScore = 1 / (rank + 1 + RRF_K);
+    const rrfScore = VECTOR_WEIGHT / (rank + 1 + RRF_K);
     const existing = scoreMap.get(k);
     if (existing) {
       existing.rrf += rrfScore;
@@ -509,7 +570,18 @@ export async function keywordSearch(
 
   ftsResults.forEach((row, rank) => {
     const k = key(row);
-    const rrfScore = 1 / (rank + 1 + RRF_K);
+    const rrfScore = FTS_WEIGHT / (rank + 1 + RRF_K);
+    const existing = scoreMap.get(k);
+    if (existing) {
+      existing.rrf += rrfScore;
+    } else {
+      scoreMap.set(k, { row, rrf: rrfScore });
+    }
+  });
+
+  idResults.forEach((row, rank) => {
+    const k = key(row);
+    const rrfScore = ID_WEIGHT / (rank + 1 + RRF_K);
     const existing = scoreMap.get(k);
     if (existing) {
       existing.rrf += rrfScore;

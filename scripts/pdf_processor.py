@@ -28,6 +28,7 @@ import io
 import re
 import gc
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import numpy as np
 import cv2
@@ -35,6 +36,7 @@ from PIL import Image
 import pytesseract
 from pytesseract import Output
 import pdf2image
+import httpx
 from openai import OpenAI
 
 MAX_PAGES = 150          # Process up to 150 pages — covers most full drawing sets
@@ -42,8 +44,9 @@ DPI = 100                # 100 DPI — enough for large-format engineering drawi
 MAX_OCR_WIDTH = 1600     # Downscale images wider than this before Tesseract
 TILE_GRID = (2, 2)       # 2×2 = 4 tiles per page
 TILE_OVERLAP = 0.12      # 12% overlap between tiles — prevents boundary content loss
-VISION_MAX_PX = 1800     # Max width for vision images sent to GPT-4o
-VISION_MAX_TOKENS = 8192 # Response token limit for GPT-4o — captures full tables and specs
+VISION_MAX_PX = 1400     # Max width for vision images sent to GPT-4o (full page)
+VISION_MAX_TOKENS = 4096 # Response token limit for GPT-4o (full page, single call)
+MIN_OCR_CHARS_FOR_VISION = 100  # Skip vision if OCR text shorter than this (nearly blank page)
 
 
 def get_page_count(pdf_path: str) -> int:
@@ -225,8 +228,12 @@ Rules:
 - confidence: 0.0-1.0 based on how clearly title block info is present"""
 
 
+VISION_TIMEOUT = 120
+VISION_MAX_RETRIES = 3
+VISION_RETRY_DELAY = 5
+
 def vision_extract(client: OpenAI, img: Image.Image) -> dict:
-    """Send an image tile to GPT-4o Vision and return structured JSON."""
+    """Send an image tile to GPT-4o Vision and return structured JSON with timeout + retry."""
     b64 = pil_to_base64(img)
     empty = {
         "title_block": {k: None for k in ["project_name","drawing_title","sheet_number","revision","date","drawn_by","scale","confidence"]},
@@ -237,27 +244,30 @@ def vision_extract(client: OpenAI, img: Image.Image) -> dict:
         "legends": [],
         "all_text": ""
     }
-    try:
-        response = client.chat.completions.create(
-            model="gpt-4o",
-            max_tokens=VISION_MAX_TOKENS,
-            messages=[{
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": VISION_PROMPT},
-                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}}
-                ]
-            }]
-        )
-        content = response.choices[0].message.content or ""
-        json_match = re.search(r'\{[\s\S]*\}', content)
-        if json_match:
-            result = json.loads(json_match.group())
-            if "tables" not in result:
-                result["tables"] = []
-            return result
-    except Exception as e:
-        print(f"Vision extract error: {e}", file=sys.stderr)
+    for attempt in range(1, VISION_MAX_RETRIES + 1):
+        try:
+            response = client.chat.completions.create(
+                model="gpt-4o",
+                max_tokens=VISION_MAX_TOKENS,
+                messages=[{
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": VISION_PROMPT},
+                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}}
+                    ]
+                }]
+            )
+            content = response.choices[0].message.content or ""
+            json_match = re.search(r'\{[\s\S]*\}', content)
+            if json_match:
+                result = json.loads(json_match.group())
+                if "tables" not in result:
+                    result["tables"] = []
+                return result
+        except Exception as e:
+            print(f"Vision extract error (attempt {attempt}/{VISION_MAX_RETRIES}): {e}", file=sys.stderr)
+            if attempt < VISION_MAX_RETRIES:
+                time.sleep(VISION_RETRY_DELAY * attempt)
     return empty
 
 
@@ -342,14 +352,7 @@ def process_page(page_num: int, pdf_path: str, client: OpenAI) -> dict:
         "callouts": callout_texts,
     }
 
-    # --- Vision: 2×2 tiles ---
-    # Use a slightly larger version for vision since it goes to GPT-4o
-    page_vision = downscale_if_large(page, 2400)
-    del page
-    tiles = tile_image(page_vision)
-    del page_vision
-    gc.collect()
-
+    # --- Vision: 2×2 tiles (parallel) ---
     merged_vision = {
         "title_block": None,
         "revision_history": [],
@@ -360,64 +363,20 @@ def process_page(page_num: int, pdf_path: str, client: OpenAI) -> dict:
         "all_text": "",
     }
 
-    seen_rev_keys: set[str] = set()
-    seen_notes: set[str] = set()
-    seen_callout_texts: set[str] = set()
-    seen_legend_syms: set[str] = set()
-    seen_table_titles: set[str] = set()
-    all_text_parts: list[str] = []
-
-    for tile_name, tile_img in tiles:
-        tr = vision_extract(client, tile_img)
-        del tile_img
+    ocr_text_len = len(full_text.strip())
+    if ocr_text_len < MIN_OCR_CHARS_FOR_VISION:
+        print(f"  Skipping vision (OCR text only {ocr_text_len} chars)", file=sys.stderr)
+        del page
+        gc.collect()
+    else:
+        print(f"  Running vision (full-page)...", file=sys.stderr)
+        page_vision = downscale_if_large(page, VISION_MAX_PX)
+        del page
         gc.collect()
 
-        # Title block: prefer highest confidence tile
-        tb = tr.get("title_block") or {}
-        existing_tb = merged_vision.get("title_block") or {}
-        existing_conf = existing_tb.get("confidence", 0.0) if isinstance(existing_tb, dict) else 0.0
-        new_conf = tb.get("confidence", 0.0) if isinstance(tb, dict) else 0.0
-        if isinstance(tb, dict) and (merged_vision["title_block"] is None or new_conf > existing_conf):
-            if any(v for k, v in tb.items() if k != "confidence" and v):
-                merged_vision["title_block"] = tb
-
-        for rev in tr.get("revision_history") or []:
-            key = str(rev.get("rev_number")) + str(rev.get("date"))
-            if key not in seen_rev_keys:
-                seen_rev_keys.add(key)
-                merged_vision["revision_history"].append(rev)
-
-        for note in tr.get("general_notes") or []:
-            nk = note.strip().lower()
-            if nk not in seen_notes and note.strip():
-                seen_notes.add(nk)
-                merged_vision["general_notes"].append(note)
-
-        for table in tr.get("tables") or []:
-            tkey = str(table.get("title", "")).strip().lower()
-            if tkey and tkey not in seen_table_titles:
-                seen_table_titles.add(tkey)
-                merged_vision["tables"].append(table)
-            elif not tkey:
-                merged_vision["tables"].append(table)
-
-        for c in tr.get("callouts") or []:
-            ct = str(c.get("text", "")).strip().lower()
-            if ct and ct not in seen_callout_texts:
-                seen_callout_texts.add(ct)
-                merged_vision["callouts"].append(c)
-
-        for leg in tr.get("legends") or []:
-            sym = str(leg.get("symbol", "")).strip().lower()
-            if sym and sym not in seen_legend_syms:
-                seen_legend_syms.add(sym)
-                merged_vision["legends"].append(leg)
-
-        tile_text = (tr.get("all_text") or "").strip()
-        if tile_text:
-            all_text_parts.append(tile_text)
-
-    merged_vision["all_text"] = "\n".join(all_text_parts)
+        merged_vision = vision_extract(client, page_vision)
+        del page_vision
+        gc.collect()
 
     if merged_vision["title_block"] is None:
         merged_vision["title_block"] = {k: None for k in ["project_name","drawing_title","sheet_number","revision","date","drawn_by","scale","confidence"]}
@@ -453,7 +412,11 @@ def main():
     streaming = "--stream" in sys.argv
 
     start_time = time.time()
-    client = OpenAI(base_url=ai_base_url, api_key=ai_api_key)
+    client = OpenAI(
+        base_url=ai_base_url,
+        api_key=ai_api_key,
+        timeout=httpx.Timeout(VISION_TIMEOUT, connect=30.0),
+    )
 
     try:
         total_pages = get_page_count(pdf_path)
