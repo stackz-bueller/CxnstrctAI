@@ -11,6 +11,7 @@ import {
   type FinancialDocument,
 } from "@workspace/db";
 import { eq, and, sql } from "drizzle-orm";
+import { embed } from "../../lib/embedder.js";
 
 const MAX_CHUNK_CHARS = 900;
 const DB_BATCH_SIZE = 30;
@@ -37,7 +38,8 @@ async function insertBatch(
   startIndex: number,
 ): Promise<void> {
   if (batch.length === 0) return;
-  await db.insert(documentChunksTable).values(
+
+  const inserted = await db.insert(documentChunksTable).values(
     batch.map((chunk, j) => ({
       projectId,
       projectDocumentId,
@@ -48,7 +50,23 @@ async function insertBatch(
       sectionLabel: chunk.sectionLabel,
       embedding: null,
     }))
-  );
+  ).returning({ id: documentChunksTable.id });
+
+  try {
+    const texts = batch.map((c) => c.content);
+    const vectors = await embed(texts);
+    for (let i = 0; i < inserted.length; i++) {
+      const vec = vectors[i];
+      if (!vec) continue;
+      await db.execute(sql`
+        UPDATE document_chunks
+        SET embedding = ${`[${vec.join(",")}]`}::vector
+        WHERE id = ${inserted[i].id}
+      `);
+    }
+  } catch (embErr) {
+    console.error("Embedding generation failed for batch, storing without vectors:", embErr);
+  }
 }
 
 async function indexSpec(
@@ -261,6 +279,14 @@ export async function indexProjectDocument(
   }
 }
 
+type SearchRow = {
+  content: string;
+  sectionLabel: string | null;
+  documentName: string;
+  documentType: string;
+  score: number;
+};
+
 const STOP_WORDS = new Set([
   "the", "is", "are", "was", "were", "for", "and", "that", "this", "with",
   "from", "what", "how", "can", "does", "did", "has", "have", "will", "not",
@@ -269,17 +295,53 @@ const STOP_WORDS = new Set([
   "then", "than", "into", "more", "also", "been", "each", "about", "per",
 ]);
 
-/**
- * Full-text search using PostgreSQL tsvector/tsquery.
- * Extracts meaningful keywords from the question and ranks chunks by relevance.
- */
-export async function keywordSearch(
-  projectId: number,
-  question: string,
-  topK = 10,
-): Promise<Array<{ content: string; sectionLabel: string | null; documentName: string; documentType: string; score: number }>> {
-  // Build a tsquery from the question words — strip stop words so PostgreSQL
-  // doesn't see stemmed-away tokens with :* suffixes, which silently kill results
+async function getDocMap(projectId: number): Promise<Map<number, string>> {
+  const docs = await db
+    .select({ id: projectDocumentsTable.id, documentName: projectDocumentsTable.documentName })
+    .from(projectDocumentsTable)
+    .where(eq(projectDocumentsTable.projectId, projectId));
+  return new Map(docs.map((d) => [d.id, d.documentName]));
+}
+
+async function vectorSearch(projectId: number, question: string, topK: number): Promise<SearchRow[]> {
+  const [queryVec] = await embed([question]);
+  if (!queryVec) return [];
+
+  const vecStr = `[${queryVec.join(",")}]`;
+
+  const rows = await db.execute<{
+    content: string;
+    section_label: string | null;
+    document_type: string;
+    project_document_id: number;
+    score: number;
+  }>(sql`
+    SELECT
+      content,
+      section_label,
+      document_type,
+      project_document_id,
+      1 - (embedding <=> ${vecStr}::vector) AS score
+    FROM document_chunks
+    WHERE project_id = ${projectId}
+      AND embedding IS NOT NULL
+    ORDER BY embedding <=> ${vecStr}::vector
+    LIMIT ${topK}
+  `);
+
+  if (rows.rows.length === 0) return [];
+
+  const docMap = await getDocMap(projectId);
+  return rows.rows.map((r) => ({
+    content: r.content,
+    sectionLabel: r.section_label,
+    documentName: docMap.get(r.project_document_id) ?? "Unknown",
+    documentType: r.document_type,
+    score: Number(r.score),
+  }));
+}
+
+async function ftsSearch(projectId: number, question: string, topK: number): Promise<SearchRow[]> {
   const words = question
     .toLowerCase()
     .replace(/[^a-z0-9\s]/g, " ")
@@ -288,12 +350,9 @@ export async function keywordSearch(
     .slice(0, 20);
 
   if (words.length === 0) return [];
-
-  // Use OR matching so partial matches still score — any relevant word counts
   const tsquery = words.map((w) => `${w}:*`).join(" | ");
 
   const results = await db.execute<{
-    id: number;
     content: string;
     section_label: string | null;
     document_type: string;
@@ -301,7 +360,6 @@ export async function keywordSearch(
     rank: number;
   }>(sql`
     SELECT
-      id,
       content,
       section_label,
       document_type,
@@ -316,17 +374,14 @@ export async function keywordSearch(
   `);
 
   if (results.rows.length === 0) {
-    // Fallback: ILIKE search — each keyword independently (OR logic), ranked by
-    // how many keywords appear in the chunk
     const topWords = words.slice(0, 6);
     const fallback = await db.execute<{
-      id: number;
       content: string;
       section_label: string | null;
       document_type: string;
       project_document_id: number;
     }>(sql`
-      SELECT id, content, section_label, document_type, project_document_id
+      SELECT content, section_label, document_type, project_document_id
       FROM document_chunks
       WHERE project_id = ${projectId}
         AND (${sql.join(
@@ -335,7 +390,6 @@ export async function keywordSearch(
         )})
       LIMIT ${topK * 3}
     `);
-    // rank by count of matching keywords in the chunk
     const ranked = fallback.rows
       .map((r) => {
         const lower = r.content.toLowerCase();
@@ -347,16 +401,8 @@ export async function keywordSearch(
     results.rows.push(...ranked);
   }
 
-  const docIds = [...new Set(results.rows.map((r) => r.project_document_id))];
-  if (docIds.length === 0) return [];
-
-  const docs = await db
-    .select({ id: projectDocumentsTable.id, documentName: projectDocumentsTable.documentName })
-    .from(projectDocumentsTable)
-    .where(eq(projectDocumentsTable.projectId, projectId));
-
-  const docMap = new Map(docs.map((d) => [d.id, d.documentName]));
-
+  if (results.rows.length === 0) return [];
+  const docMap = await getDocMap(projectId);
   return results.rows.map((r) => ({
     content: r.content,
     sectionLabel: r.section_label,
@@ -364,4 +410,32 @@ export async function keywordSearch(
     documentType: r.document_type,
     score: Number(r.rank),
   }));
+}
+
+/**
+ * Semantic search: uses pgvector cosine similarity as primary strategy,
+ * falls back to full-text search if embeddings are not yet generated.
+ */
+export async function keywordSearch(
+  projectId: number,
+  question: string,
+  topK = 10,
+): Promise<SearchRow[]> {
+  const hasEmbedding = await db.execute<{ cnt: string }>(sql`
+    SELECT COUNT(*) AS cnt FROM document_chunks
+    WHERE project_id = ${projectId} AND embedding IS NOT NULL
+    LIMIT 1
+  `);
+  const embeddedCount = Number(hasEmbedding.rows[0]?.cnt ?? 0);
+
+  if (embeddedCount > 0) {
+    try {
+      const results = await vectorSearch(projectId, question, topK);
+      if (results.length > 0) return results;
+    } catch (e) {
+      console.error("Vector search failed, falling back to FTS:", e);
+    }
+  }
+
+  return ftsSearch(projectId, question, topK);
 }

@@ -1,4 +1,10 @@
-import { pgTable, serial, text, jsonb, integer, real, timestamp } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, jsonb, integer, real, timestamp, customType } from "drizzle-orm/pg-core";
+
+const vector384 = customType<{ data: number[]; driverData: string }>({
+  dataType() { return "vector(384)"; },
+  toDriver(value: number[]): string { return `[${value.join(",")}]`; },
+  fromDriver(value: string): number[] { return value.slice(1, -1).split(",").map(Number); },
+});
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
@@ -48,7 +54,7 @@ export const documentChunksTable = pgTable("document_chunks", {
   chunkIndex: integer("chunk_index").notNull(),
   content: text("content").notNull(),
   sectionLabel: text("section_label"),
-  embedding: jsonb("embedding").$type<number[]>(),
+  embedding: vector384("embedding"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 

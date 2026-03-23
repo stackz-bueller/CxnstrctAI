@@ -99,14 +99,24 @@ A project-scoped AI assistant that answers questions only from indexed project d
 **How it works:**
 1. Create a project (e.g. "Wyoming Complex")
 2. Assign completed extractions (specs, drawings, financials, OCR) to the project
-3. Each document is automatically chunked and embedded using `text-embedding-3-small`
-4. When a question is asked, it's embedded, top-K semantically similar chunks are retrieved (cosine similarity), and GPT-4o answers using only those chunks as context — no outside knowledge
-5. Chat history is stored per project; each project is fully isolated
+3. Each document is automatically chunked and embedded using a local `all-MiniLM-L6-v2` ONNX model (22MB, runs via `onnxruntime-node` with a pure-JS WordPiece tokenizer — no external API or `sharp` dependency)
+4. Embeddings stored in PostgreSQL as `vector(384)` using pgvector extension with a cosine IVFFlat index
+5. When a question is asked, it's embedded, top-K semantically similar chunks are retrieved (pgvector cosine similarity), and GPT-4o answers using only those chunks as context — no outside knowledge
+6. Chat history is stored per project; each project is fully isolated
 
 **Anti-hallucination:** If no relevant chunks exceed a similarity threshold (0.25), the AI explicitly says it cannot find the answer rather than guessing.
 
+**Embedding model files:** `artifacts/api-server/models/model.onnx` + `tokenizer.json`
+
+**Critical notes:**
+- Replit AI proxy does NOT support `/embeddings` endpoint — only chat completions. All embedding is done locally.
+- `@xenova/transformers` is installed but broken (`sharp` native binary not compiled) — do NOT use it. Use `embedder.ts` instead.
+- On startup, a background backfill runs to generate embeddings for any chunks that are missing them.
+- Max pages per PDF: 150 (raised from original 5 to capture full documents)
+
 **Key files:**
-- `artifacts/api-server/src/routes/projects/indexer.ts` — chunker, embedder, cosine search
+- `artifacts/api-server/src/lib/embedder.ts` — local ONNX embedding with WordPiece tokenizer
+- `artifacts/api-server/src/routes/projects/indexer.ts` — chunker, embedder call, pgvector search
 - `artifacts/api-server/src/routes/projects/router.ts` — projects CRUD + document management + RAG chat
 - `artifacts/ocr-extractor/src/pages/projects.tsx` — project list UI
 - `artifacts/ocr-extractor/src/pages/project-detail.tsx` — document manager + chat UI

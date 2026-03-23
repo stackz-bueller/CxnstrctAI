@@ -1,8 +1,10 @@
 import app from "./app";
 import { logger } from "./lib/logger";
 import { db } from "@workspace/db";
-import { projectDocumentsTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { documentChunksTable, projectDocumentsTable } from "@workspace/db";
+import { eq, isNull } from "drizzle-orm";
+import { sql } from "drizzle-orm";
+import { embed } from "./lib/embedder.js";
 
 const rawPort = process.env["PORT"];
 
@@ -33,6 +35,42 @@ async function resetStuckIndexing() {
   }
 }
 
+async function backfillEmbeddings() {
+  try {
+    const rows = await db.execute<{ id: number; content: string }>(sql`
+      SELECT id, content FROM document_chunks
+      WHERE embedding IS NULL
+      ORDER BY id
+    `);
+    if (rows.rows.length === 0) return;
+
+    logger.info({ count: rows.rows.length }, "Backfilling vector embeddings for existing chunks");
+
+    const BATCH = 16;
+    for (let i = 0; i < rows.rows.length; i += BATCH) {
+      const batch = rows.rows.slice(i, i + BATCH);
+      try {
+        const vectors = await embed(batch.map((r) => r.content));
+        for (let j = 0; j < batch.length; j++) {
+          const vec = vectors[j];
+          if (!vec) continue;
+          await db.execute(sql`
+            UPDATE document_chunks
+            SET embedding = ${`[${vec.join(",")}]`}::vector
+            WHERE id = ${batch[j].id}
+          `);
+        }
+        logger.info({ done: Math.min(i + BATCH, rows.rows.length), total: rows.rows.length }, "Embedding backfill progress");
+      } catch (batchErr) {
+        logger.error({ err: batchErr, batchStart: i }, "Backfill batch failed, skipping");
+      }
+    }
+    logger.info("Vector embedding backfill complete");
+  } catch (err) {
+    logger.error({ err }, "Backfill embeddings failed");
+  }
+}
+
 app.listen(port, async (err) => {
   if (err) {
     logger.error({ err }, "Error listening on port");
@@ -41,4 +79,5 @@ app.listen(port, async (err) => {
 
   logger.info({ port }, "Server listening");
   await resetStuckIndexing();
+  backfillEmbeddings();
 });
