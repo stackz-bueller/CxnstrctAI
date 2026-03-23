@@ -27,19 +27,22 @@ function makeChunks(text: string, label: string): Array<{ content: string; secti
   while (start < t.length) {
     let end = Math.min(start + MAX_CHUNK_CHARS, t.length);
     if (end < t.length) {
-      const window = t.slice(Math.max(start + MAX_CHUNK_CHARS - 200, start), end);
+      const windowStart = Math.max(start + MAX_CHUNK_CHARS - 200, start);
+      const window = t.slice(windowStart, end);
       const sentenceEnd = window.lastIndexOf(". ");
       if (sentenceEnd > 0) {
-        end = Math.max(start + MAX_CHUNK_CHARS - 200, start) + sentenceEnd + 2;
+        end = windowStart + sentenceEnd + 2;
       } else {
         const newlineEnd = window.lastIndexOf("\n");
         if (newlineEnd > 0) {
-          end = Math.max(start + MAX_CHUNK_CHARS - 200, start) + newlineEnd + 1;
+          end = windowStart + newlineEnd + 1;
         }
       }
     }
     chunks.push({ content: t.slice(start, end), sectionLabel: label });
-    start = Math.max(start + 1, end - CHUNK_OVERLAP);
+    if (end >= t.length) break;
+    start = end - CHUNK_OVERLAP;
+    if (t.length - start <= CHUNK_OVERLAP) break;
   }
   return chunks;
 }

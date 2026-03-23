@@ -84,7 +84,7 @@ def main():
     client = OpenAI(base_url=ai_base_url, api_key=ai_api_key)
     response = client.chat.completions.create(
         model="gpt-4o",
-        max_tokens=4096,
+        max_tokens=8192,
         messages=[{
             "role": "user",
             "content": [
