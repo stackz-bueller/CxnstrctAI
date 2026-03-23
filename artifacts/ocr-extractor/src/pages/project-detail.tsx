@@ -102,6 +102,8 @@ export default function ProjectDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const [activeTab, setActiveTab] = useState<"documents" | "assistant">("assistant");
+
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [chatLoading, setChatLoading] = useState(false);
   const [question, setQuestion] = useState("");
@@ -340,9 +342,34 @@ export default function ProjectDetailPage() {
         </div>
       </div>
 
-      <div className="flex-1 grid grid-cols-1 lg:grid-cols-5 gap-6 min-h-0">
-        {/* Left: Documents panel */}
-        <div className="lg:col-span-2 flex flex-col gap-4">
+      {/* Tab bar */}
+      <div className="flex gap-1 rounded-xl border border-border bg-card p-1 shrink-0">
+        <button
+          onClick={() => setActiveTab("assistant")}
+          className={`flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${activeTab === "assistant" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground hover:bg-muted/50"}`}
+        >
+          <Bot className="size-4" />
+          Assistant
+          {hasIndexed && <span className={`size-1.5 rounded-full ${activeTab === "assistant" ? "bg-primary-foreground/60" : "bg-emerald-500"}`} />}
+        </button>
+        <button
+          onClick={() => setActiveTab("documents")}
+          className={`flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${activeTab === "documents" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground hover:bg-muted/50"}`}
+        >
+          <FileText className="size-4" />
+          Documents
+          {project.documents.length > 0 && (
+            <span className={`text-xs px-1.5 py-0.5 rounded-full font-medium ${activeTab === "documents" ? "bg-primary-foreground/20 text-primary-foreground" : "bg-muted text-muted-foreground"}`}>
+              {project.documents.length}
+            </span>
+          )}
+        </button>
+      </div>
+
+      <div className="flex-1 min-h-0">
+        {/* ── Documents tab ── */}
+        {activeTab === "documents" && (
+        <div className="h-full flex flex-col gap-4 overflow-y-auto">
           <div className="rounded-xl border border-border bg-card p-4 space-y-3">
             <div className="flex items-center justify-between">
               <h2 className="font-semibold text-sm text-foreground flex items-center gap-2">
@@ -465,9 +492,11 @@ export default function ProjectDetailPage() {
             </div>
           )}
         </div>
+        )}
 
-        {/* Right: Chat panel */}
-        <div className="lg:col-span-3 flex flex-col rounded-xl border border-border bg-card overflow-hidden min-h-0">
+        {/* ── Assistant tab ── */}
+        {activeTab === "assistant" && (
+        <div className="h-full flex flex-col rounded-xl border border-border bg-card overflow-hidden min-h-0">
           {/* Chat header */}
           <div className="flex items-center justify-between px-4 py-3 border-b border-border">
             <div className="flex items-center gap-2">
@@ -626,6 +655,7 @@ export default function ProjectDetailPage() {
             </p>
           </div>
         </div>
+        )}
       </div>
     </div>
   );
