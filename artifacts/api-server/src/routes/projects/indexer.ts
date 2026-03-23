@@ -413,13 +413,15 @@ async function ftsSearch(projectId: number, question: string, topK: number): Pro
 }
 
 /**
- * Semantic search: uses pgvector cosine similarity as primary strategy,
- * falls back to full-text search if embeddings are not yet generated.
+ * Hybrid search: runs vector similarity search AND full-text search in
+ * parallel, then merges results using Reciprocal Rank Fusion (RRF).
+ * This ensures exact keyword matches (spec sections, drawing callouts) are
+ * always surfaced even when the semantic embedding is not the closest match.
  */
 export async function keywordSearch(
   projectId: number,
   question: string,
-  topK = 10,
+  topK = 15,
 ): Promise<SearchRow[]> {
   const hasEmbedding = await db.execute<{ cnt: string }>(sql`
     SELECT COUNT(*) AS cnt FROM document_chunks
@@ -428,14 +430,61 @@ export async function keywordSearch(
   `);
   const embeddedCount = Number(hasEmbedding.rows[0]?.cnt ?? 0);
 
+  const FETCH_K = Math.max(topK * 3, 30);
+  const RRF_K = 60;
+
+  let vectorResults: SearchRow[] = [];
+  let ftsResults: SearchRow[] = [];
+
   if (embeddedCount > 0) {
     try {
-      const results = await vectorSearch(projectId, question, topK);
-      if (results.length > 0) return results;
+      [vectorResults, ftsResults] = await Promise.all([
+        vectorSearch(projectId, question, FETCH_K),
+        ftsSearch(projectId, question, FETCH_K),
+      ]);
     } catch (e) {
-      console.error("Vector search failed, falling back to FTS:", e);
+      console.error("Hybrid search error, falling back to FTS only:", e);
+      ftsResults = await ftsSearch(projectId, question, FETCH_K);
     }
+  } else {
+    ftsResults = await ftsSearch(projectId, question, FETCH_K);
   }
 
-  return ftsSearch(projectId, question, topK);
+  if (vectorResults.length === 0 && ftsResults.length === 0) return [];
+
+  // If only one source returned results, use it directly
+  if (vectorResults.length === 0) return ftsResults.slice(0, topK);
+  if (ftsResults.length === 0) return vectorResults.slice(0, topK);
+
+  // Build RRF score map keyed by content (first 120 chars as dedup key)
+  const scoreMap = new Map<string, { row: SearchRow; rrf: number }>();
+
+  const key = (r: SearchRow) => r.content.slice(0, 120);
+
+  vectorResults.forEach((row, rank) => {
+    const k = key(row);
+    const rrfScore = 1 / (rank + 1 + RRF_K);
+    const existing = scoreMap.get(k);
+    if (existing) {
+      existing.rrf += rrfScore;
+    } else {
+      scoreMap.set(k, { row, rrf: rrfScore });
+    }
+  });
+
+  ftsResults.forEach((row, rank) => {
+    const k = key(row);
+    const rrfScore = 1 / (rank + 1 + RRF_K);
+    const existing = scoreMap.get(k);
+    if (existing) {
+      existing.rrf += rrfScore;
+    } else {
+      scoreMap.set(k, { row, rrf: rrfScore });
+    }
+  });
+
+  return Array.from(scoreMap.values())
+    .sort((a, b) => b.rrf - a.rrf)
+    .slice(0, topK)
+    .map((entry) => ({ ...entry.row, score: entry.rrf }));
 }

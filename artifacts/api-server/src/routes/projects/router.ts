@@ -334,7 +334,7 @@ router.post("/:id/chat", async (req, res) => {
       return;
     }
 
-    const relevantChunks = await keywordSearch(projectId, question, 10);
+    const relevantChunks = await keywordSearch(projectId, question, 15);
 
     await db.insert(projectChatsTable).values({ projectId, role: "user", content: question, sources: [] });
 
