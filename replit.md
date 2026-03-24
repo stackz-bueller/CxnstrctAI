@@ -44,6 +44,7 @@ The project is organized as a pnpm monorepo using TypeScript 5.9, with a clear s
     6.  **Multi-Crop Verification**: For dense tables (≥8 rows), automatically runs 4 overlapping crop extractions with cross-validation to prevent truncation and misreading.
     7.  **Merging**: OCR and Vision results are merged, with Vision taking priority and OCR filling gaps.
 -   **Extracted fields**: Title block data, revision history, general notes, structured tables (compaction density, material schedules, pipe schedules), callouts, legends, full raw text.
+-   **PE Stamp Extraction**: Professional Engineer stamp data (name, license, discipline) is extracted via targeted right-edge crops of drawing pages. Stamps with signatures over printed names require focused crops for reliable OCR. PE data is injected into `all_text` as structured `PROFESSIONAL ENGINEER STAMP` blocks and indexed as dedicated searchable chunks per discipline (civil, electrical, plumbing/mechanical).
 -   **Script**: `scripts/pdf_processor.py` (Python child process).
 
 ### Specification Extraction Pipeline

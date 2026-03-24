@@ -252,9 +252,26 @@ async function indexConstruction(
 
   let totalIndexed = 0;
 
+  const titleBlockSummaries: string[] = [];
+
   for (const page of pages) {
     const label = `Drawing Page ${page.page_number}${page.title_block.drawing_title ? " – " + page.title_block.drawing_title : ""}${page.title_block.sheet_number ? " (" + page.title_block.sheet_number + ")" : ""}`;
     const pending: Array<{ content: string; sectionLabel: string }> = [];
+
+    const tb = page.title_block;
+    if (tb) {
+      const tbFields: string[] = [];
+      if (tb.project_name) tbFields.push(`Project: ${tb.project_name}`);
+      if (tb.drawing_title) tbFields.push(`Drawing: ${tb.drawing_title}`);
+      if (tb.sheet_number) tbFields.push(`Sheet: ${tb.sheet_number}`);
+      if (tb.revision) tbFields.push(`Revision: ${tb.revision}`);
+      if (tb.date) tbFields.push(`Date: ${tb.date}`);
+      if (tb.drawn_by) tbFields.push(`Drawn By: ${tb.drawn_by}`);
+      if (tb.scale) tbFields.push(`Scale: ${tb.scale}`);
+      if (tbFields.length > 0) {
+        titleBlockSummaries.push(`${label}: ${tbFields.join(", ")}`);
+      }
+    }
 
     if (page.general_notes.length > 0) {
       pending.push(...makeChunks(`${label} – General Notes:\n${page.general_notes.join("\n")}`, label));
@@ -288,6 +305,32 @@ async function indexConstruction(
       await insertBatch(projectId, projectDocumentId, "construction", documentId, pending, totalIndexed);
       totalIndexed += pending.length;
     }
+  }
+
+  if (titleBlockSummaries.length > 0) {
+    const tbChunkText = `PROJECT DRAWING TITLE BLOCKS AND PROFESSIONAL ENGINEER INFORMATION:\n` +
+      titleBlockSummaries.join("\n");
+    const tbChunks = makeChunks(tbChunkText, "Drawing Title Blocks");
+    await insertBatch(projectId, projectDocumentId, "construction", documentId, tbChunks, totalIndexed);
+    totalIndexed += tbChunks.length;
+  }
+
+  const peStampBlocks: string[] = [];
+  for (const page of pages) {
+    const text = page.all_text || "";
+    const stampMatch = text.match(/PROFESSIONAL ENGINEER STAMP[^\n]*\n(?:[\s\S]*?)(?=\n\n|\nPROFESSIONAL ENGINEER STAMP|$)/g);
+    if (stampMatch) {
+      for (const block of stampMatch) {
+        peStampBlocks.push(`Page ${page.page_number} (${page.title_block?.sheet_number || "Cover"}):\n${block.trim()}`);
+      }
+    }
+  }
+  if (peStampBlocks.length > 0) {
+    const peText = `PROFESSIONAL ENGINEERS OF RECORD FOR THIS PROJECT:\n\n` +
+      peStampBlocks.join("\n\n");
+    const peChunks = makeChunks(peText, "Professional Engineers of Record");
+    await insertBatch(projectId, projectDocumentId, "construction", documentId, peChunks, totalIndexed);
+    totalIndexed += peChunks.length;
   }
 
   const allWarnings: string[] = [];
@@ -592,6 +635,11 @@ const CONSTRUCTION_SYNONYMS: Record<string, string[]> = {
   "located": ["located", "location", "site address", "street", "municipality", "borough", "township", "county", "state", "title block", "cover sheet", "site plan"],
   "address": ["address", "site address", "street", "avenue", "location", "title block", "site plan"],
   "where": ["location", "site address", "municipality", "county", "title block"],
+  "engineer": ["engineer", "professional engineer", "PE", "engineer of record", "PE stamp", "licensed engineer", "sealed by"],
+  "engineer of record": ["engineer of record", "professional engineer", "PE stamp", "PE license", "sealed by", "designed by", "drawn by"],
+  "pe": ["professional engineer", "PE stamp", "PE license", "engineer of record", "sealed"],
+  "who": ["engineer", "professional engineer", "drawn by", "designed by", "prepared by", "PE stamp"],
+  "stamped": ["stamped", "sealed", "professional engineer", "PE stamp", "engineer of record"],
 };
 
 function expandSynonyms(question: string): string {
