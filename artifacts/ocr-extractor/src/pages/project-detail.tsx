@@ -347,57 +347,33 @@ export default function ProjectDetailPage() {
   const hasIndexed = indexedCount > 0;
 
   return (
-    <div className="h-full flex flex-col gap-6 max-w-5xl mx-auto">
+    <div className="h-full flex flex-col gap-3 max-w-full mx-auto">
       {/* Header */}
-      <div>
+      <div className="flex items-center gap-3 px-2 shrink-0 border-b border-border pb-3">
         <button
           onClick={() => navigate("/")}
-          className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors mb-3"
+          className="size-8 rounded-lg flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors shrink-0"
+          title="All Projects"
         >
-          <ChevronLeft className="size-4" />
-          All Projects
+          <ChevronLeft className="size-5" />
         </button>
-        <div className="flex items-start justify-between">
-          <div className="flex items-center gap-3">
-            <div className="size-10 rounded-xl bg-orange-500/10 flex items-center justify-center border border-orange-500/20">
-              <HardHat className="size-5 text-orange-500" />
-            </div>
-            <div>
-              <h1 className="text-xl font-bold text-foreground">{project.name}</h1>
-              {project.description && (
-                <p className="text-sm text-muted-foreground mt-0.5">{project.description}</p>
-              )}
-            </div>
-          </div>
-          <div className="text-xs text-muted-foreground text-right">
-            <div>{project.documents.length} document{project.documents.length !== 1 ? "s" : ""}</div>
-            <div>{indexedCount} indexed</div>
-          </div>
+        <h1 className="text-base font-semibold text-foreground truncate">{project.name}</h1>
+        <div className="flex items-center gap-1 ml-auto shrink-0">
+          <button
+            onClick={() => setActiveTab("assistant")}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${activeTab === "assistant" ? "bg-card border border-border text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+          >
+            <Bot className="size-3.5" />
+            Chat
+          </button>
+          <button
+            onClick={() => setActiveTab("documents")}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${activeTab === "documents" ? "bg-card border border-border text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+          >
+            <FileText className="size-3.5" />
+            Docs ({project.documents.length})
+          </button>
         </div>
-      </div>
-
-      {/* Tab bar */}
-      <div className="flex gap-1 rounded-xl border border-border bg-card p-1 shrink-0">
-        <button
-          onClick={() => setActiveTab("assistant")}
-          className={`flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${activeTab === "assistant" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground hover:bg-muted/50"}`}
-        >
-          <Bot className="size-4" />
-          Assistant
-          {hasIndexed && <span className={`size-1.5 rounded-full ${activeTab === "assistant" ? "bg-primary-foreground/60" : "bg-emerald-500"}`} />}
-        </button>
-        <button
-          onClick={() => setActiveTab("documents")}
-          className={`flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${activeTab === "documents" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground hover:bg-muted/50"}`}
-        >
-          <FileText className="size-4" />
-          Documents
-          {project.documents.length > 0 && (
-            <span className={`text-xs px-1.5 py-0.5 rounded-full font-medium ${activeTab === "documents" ? "bg-primary-foreground/20 text-primary-foreground" : "bg-muted text-muted-foreground"}`}>
-              {project.documents.length}
-            </span>
-          )}
-        </button>
       </div>
 
       <div className="flex-1 min-h-0">
@@ -530,213 +506,210 @@ export default function ProjectDetailPage() {
 
         {/* ── Assistant tab ── */}
         {activeTab === "assistant" && (
-        <div className="h-full flex flex-col rounded-xl border border-border bg-card overflow-hidden min-h-0">
-          {/* Chat header */}
-          <div className="flex items-center justify-between px-4 py-3 border-b border-border">
-            <div className="flex items-center gap-2">
-              <Bot className="size-4 text-primary" />
-              <span className="text-sm font-semibold">Project Assistant</span>
-              {hasIndexed && (
-                <span className="text-xs text-emerald-500 flex items-center gap-1">
-                  <CheckCircle2 className="size-3" />
-                  Ready
-                </span>
-              )}
-            </div>
-            {messages.length > 0 && (
-              <button
-                onClick={clearChat}
-                className="text-xs text-muted-foreground hover:text-destructive transition-colors"
-              >
-                Clear history
-              </button>
-            )}
-          </div>
-
-          {/* Messages */}
-          <div ref={messagesContainerRef} className="flex-1 overflow-y-auto p-4 space-y-4 min-h-0">
-            {messages.length === 0 && (
-              <div className="space-y-4">
-                <div className="text-center py-6">
-                  <div className="size-12 rounded-xl bg-primary/10 flex items-center justify-center mx-auto mb-3">
-                    <Sparkles className="size-6 text-primary" />
+        <div className="h-full flex flex-col overflow-hidden min-h-0">
+          {/* Messages area */}
+          <div ref={messagesContainerRef} className="flex-1 overflow-y-auto min-h-0">
+            {messages.length === 0 ? (
+              <div className="h-full flex flex-col items-center justify-center px-4">
+                <div className="max-w-md text-center space-y-6">
+                  <div className="size-16 rounded-2xl bg-primary/10 flex items-center justify-center mx-auto border border-primary/20">
+                    <HardHat className="size-8 text-primary" />
                   </div>
-                  <p className="font-medium text-foreground text-sm">Ask anything about this project</p>
-                  <p className="text-xs text-muted-foreground mt-1 max-w-xs mx-auto">
-                    {hasIndexed
-                      ? "The AI will answer only from indexed project documents — no guessing, no hallucinations."
-                      : "Add and index documents first to start asking questions."}
-                  </p>
-                </div>
-                {hasIndexed && (
-                  <div className="space-y-2">
-                    <p className="text-xs font-medium text-muted-foreground text-center">Try asking:</p>
-                    <div className="flex flex-wrap gap-2 justify-center">
+                  <div>
+                    <h2 className="text-lg font-semibold text-foreground">How can I help with {project.name}?</h2>
+                    <p className="text-sm text-muted-foreground mt-2">
+                      {hasIndexed
+                        ? "I only answer from your indexed project documents — plans, specs, and drawings. Ask me anything."
+                        : "Add and index documents first, then I can answer questions about them."}
+                    </p>
+                  </div>
+                  {hasIndexed && (
+                    <div className="grid grid-cols-2 gap-2">
                       {SUGGESTED_QUESTIONS.map((q) => (
                         <button
                           key={q}
                           onClick={() => askQuestion(q)}
-                          className="text-xs px-3 py-1.5 rounded-full border border-border hover:border-primary/50 hover:bg-primary/5 text-muted-foreground hover:text-foreground transition-all"
+                          className="text-left text-sm px-4 py-3 rounded-xl border border-border hover:border-primary/40 hover:bg-muted/50 text-muted-foreground hover:text-foreground transition-all"
                         >
                           {q}
                         </button>
                       ))}
                     </div>
-                  </div>
-                )}
+                  )}
+                </div>
               </div>
-            )}
+            ) : (
+              <div className="divide-y divide-border/50">
+                <AnimatePresence initial={false}>
+                  {messages.map((msg) => (
+                    <motion.div
+                      key={msg.id}
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      className={msg.role === "user" ? "bg-transparent" : "bg-muted/30"}
+                    >
+                      <div className="max-w-3xl mx-auto px-4 py-6">
+                        <div className="flex gap-4">
+                          <div className={`size-8 rounded-lg flex items-center justify-center shrink-0 mt-0.5 ${msg.role === "user" ? "bg-primary/15 border border-primary/25" : "bg-card border border-border"}`}>
+                            {msg.role === "user" ? <User className="size-4 text-primary" /> : <Bot className="size-4 text-muted-foreground" />}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 mb-1">
+                              <span className="text-sm font-semibold text-foreground">{msg.role === "user" ? "You" : "ConstructAI"}</span>
+                              {msg.role === "assistant" && (() => {
+                                const conf = getConfidenceDisplay(msg.confidence);
+                                if (!conf) return null;
+                                const ConfIcon = conf.Icon;
+                                return (
+                                  <span className={`inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded-md border ${conf.bg} ${conf.color}`}>
+                                    <ConfIcon className="size-2.5" />
+                                    {msg.confidence}/10
+                                  </span>
+                                );
+                              })()}
+                            </div>
+                            {msg.role === "assistant" ? (
+                              <div className="prose prose-sm prose-invert max-w-none text-sm leading-relaxed text-foreground/90
+                                prose-p:my-2 prose-p:leading-relaxed
+                                prose-headings:mt-4 prose-headings:mb-2 prose-headings:font-semibold prose-headings:text-foreground
+                                prose-h3:text-sm prose-h3:font-semibold
+                                prose-strong:text-foreground prose-strong:font-semibold
+                                prose-ul:my-2 prose-ul:pl-5 prose-ol:my-2 prose-ol:pl-5
+                                prose-li:my-0.5 prose-li:leading-relaxed
+                                prose-table:my-3 prose-table:text-xs prose-table:border-collapse
+                                prose-th:px-3 prose-th:py-2 prose-th:text-left prose-th:font-semibold prose-th:border prose-th:border-border prose-th:bg-card prose-th:text-foreground
+                                prose-td:px-3 prose-td:py-2 prose-td:border prose-td:border-border prose-td:text-muted-foreground
+                                prose-hr:my-4 prose-hr:border-border
+                                prose-code:text-xs prose-code:bg-card prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:text-foreground prose-code:border prose-code:border-border
+                                prose-a:text-primary prose-a:no-underline hover:prose-a:underline
+                              ">
+                                <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+                              </div>
+                            ) : (
+                              <p className="text-sm text-foreground/90 leading-relaxed">{msg.content}</p>
+                            )}
 
-            <AnimatePresence initial={false}>
-              {messages.map((msg) => (
-                <motion.div
-                  key={msg.id}
-                  initial={{ opacity: 0, y: 6 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  className={`flex gap-3 ${msg.role === "user" ? "flex-row-reverse" : ""}`}
-                >
-                  <div className={`size-7 rounded-full flex items-center justify-center shrink-0 ${msg.role === "user" ? "bg-primary/20" : "bg-muted"}`}>
-                    {msg.role === "user" ? <User className="size-3.5 text-primary" /> : <Bot className="size-3.5 text-muted-foreground" />}
-                  </div>
-                  <div className={`flex-1 max-w-[85%] space-y-2 ${msg.role === "user" ? "items-end" : "items-start"} flex flex-col`}>
-                    <div className={`rounded-2xl px-4 py-3 text-sm ${msg.role === "user" ? "bg-primary text-primary-foreground rounded-tr-sm" : "bg-muted text-foreground rounded-tl-sm"}`}>
-                      {msg.role === "assistant" ? (
-                        <div className="prose prose-sm prose-invert max-w-none leading-relaxed
-                          prose-p:my-1.5 prose-p:leading-relaxed
-                          prose-headings:mt-3 prose-headings:mb-1.5 prose-headings:font-semibold prose-headings:text-foreground
-                          prose-h3:text-sm prose-h3:font-semibold
-                          prose-strong:text-foreground prose-strong:font-semibold
-                          prose-ul:my-1.5 prose-ul:pl-4 prose-ol:my-1.5 prose-ol:pl-4
-                          prose-li:my-0.5 prose-li:leading-relaxed
-                          prose-table:my-2 prose-table:text-xs
-                          prose-th:px-3 prose-th:py-1.5 prose-th:text-left prose-th:font-semibold prose-th:border prose-th:border-border prose-th:bg-card prose-th:text-foreground
-                          prose-td:px-3 prose-td:py-1.5 prose-td:border prose-td:border-border prose-td:text-muted-foreground
-                          prose-hr:my-3 prose-hr:border-border
-                          prose-code:text-xs prose-code:bg-card prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:text-foreground
-                          prose-a:text-primary prose-a:no-underline hover:prose-a:underline
-                        ">
-                          <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
-                        </div>
-                      ) : (
-                        <p className="whitespace-pre-wrap leading-relaxed">{msg.content}</p>
-                      )}
-                    </div>
+                            {msg.role === "assistant" && (
+                              <div className="mt-3 flex items-center gap-1 border-t border-border/30 pt-3">
+                                <button
+                                  onClick={() => submitFeedback(msg.id, "positive")}
+                                  className={`p-1.5 rounded-md transition-colors ${msg.feedback === "positive" ? "text-green-500 bg-green-500/10" : "text-muted-foreground/50 hover:text-foreground hover:bg-muted"}`}
+                                  title="Good response"
+                                >
+                                  <ThumbsUp className="size-4" />
+                                </button>
+                                <button
+                                  onClick={() => submitFeedback(msg.id, "negative")}
+                                  className={`p-1.5 rounded-md transition-colors ${msg.feedback === "negative" ? "text-red-500 bg-red-500/10" : "text-muted-foreground/50 hover:text-foreground hover:bg-muted"}`}
+                                  title="Bad response"
+                                >
+                                  <ThumbsDown className="size-4" />
+                                </button>
+                                <div className="w-px h-4 bg-border/50 mx-1" />
+                                {msg.sources && msg.sources.length > 0 && (
+                                  <button
+                                    onClick={() => toggleSources(msg.id)}
+                                    className="flex items-center gap-1.5 text-xs text-muted-foreground/60 hover:text-foreground px-2 py-1.5 rounded-md hover:bg-muted transition-colors"
+                                  >
+                                    <FileText className="size-3.5" />
+                                    {msg.sources.length} source{msg.sources.length !== 1 ? "s" : ""}
+                                    {expandedSources.has(msg.id) ? <ChevronUp className="size-3" /> : <ChevronDown className="size-3" />}
+                                  </button>
+                                )}
+                                {messages.indexOf(msg) === messages.length - 1 && messages.length > 1 && (
+                                  <button
+                                    onClick={clearChat}
+                                    className="ml-auto text-xs text-muted-foreground/40 hover:text-destructive px-2 py-1.5 rounded-md hover:bg-destructive/10 transition-colors"
+                                  >
+                                    Clear chat
+                                  </button>
+                                )}
+                              </div>
+                            )}
 
-                    {msg.role === "assistant" && (
-                      <div className="w-full space-y-2">
-                        <div className="flex items-center gap-3">
-                          {msg.sources && msg.sources.length > 0 && (
-                            <button
-                              onClick={() => toggleSources(msg.id)}
-                              className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
-                            >
-                              <FileText className="size-3" />
-                              {msg.sources.length} source{msg.sources.length !== 1 ? "s" : ""}
-                              {expandedSources.has(msg.id) ? <ChevronUp className="size-3" /> : <ChevronDown className="size-3" />}
-                            </button>
-                          )}
-                          {(() => {
-                            const conf = getConfidenceDisplay(msg.confidence);
-                            if (!conf) return null;
-                            const ConfIcon = conf.Icon;
-                            return (
-                              <span className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border ${conf.bg} ${conf.color}`}>
-                                <ConfIcon className="size-3" />
-                                {conf.label} ({msg.confidence}/10)
-                              </span>
-                            );
-                          })()}
-                          <div className="flex items-center gap-1 ml-auto">
-                            <button
-                              onClick={() => submitFeedback(msg.id, "positive")}
-                              className={`p-1 rounded transition-colors ${msg.feedback === "positive" ? "text-green-600 bg-green-50" : "text-muted-foreground hover:text-green-600 hover:bg-green-50"}`}
-                              title="Correct answer"
-                            >
-                              <ThumbsUp className="size-3.5" />
-                            </button>
-                            <button
-                              onClick={() => submitFeedback(msg.id, "negative")}
-                              className={`p-1 rounded transition-colors ${msg.feedback === "negative" ? "text-red-600 bg-red-50" : "text-muted-foreground hover:text-red-600 hover:bg-red-50"}`}
-                              title="Incorrect answer"
-                            >
-                              <ThumbsDown className="size-3.5" />
-                            </button>
+                            {msg.role === "assistant" && msg.sources && expandedSources.has(msg.id) && (
+                              <AnimatePresence>
+                                <motion.div
+                                  initial={{ opacity: 0, height: 0 }}
+                                  animate={{ opacity: 1, height: "auto" }}
+                                  exit={{ opacity: 0, height: 0 }}
+                                  className="overflow-hidden mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2"
+                                >
+                                  {msg.sources.map((src, i) => {
+                                    const meta = DOC_TYPE_META[src.documentType as keyof typeof DOC_TYPE_META] ?? DOC_TYPE_META.ocr;
+                                    const Icon = meta.icon;
+                                    return (
+                                      <div key={i} className="rounded-lg border border-border bg-card/50 p-2.5 space-y-1">
+                                        <div className="flex items-center gap-1.5">
+                                          <Icon className={`size-3 ${meta.color}`} />
+                                          <span className="text-xs font-medium text-foreground truncate">{src.documentName}</span>
+                                        </div>
+                                        {src.sectionLabel && (
+                                          <p className="text-[11px] text-muted-foreground">{src.sectionLabel}</p>
+                                        )}
+                                        <p className="text-[11px] text-muted-foreground leading-relaxed line-clamp-2">{src.excerpt}</p>
+                                      </div>
+                                    );
+                                  })}
+                                </motion.div>
+                              </AnimatePresence>
+                            )}
                           </div>
                         </div>
-                        <AnimatePresence>
-                          {expandedSources.has(msg.id) && (
-                            <motion.div
-                              initial={{ opacity: 0, height: 0 }}
-                              animate={{ opacity: 1, height: "auto" }}
-                              exit={{ opacity: 0, height: 0 }}
-                              className="overflow-hidden mt-2 space-y-2"
-                            >
-                              {msg.sources.map((src, i) => {
-                                const meta = DOC_TYPE_META[src.documentType as keyof typeof DOC_TYPE_META] ?? DOC_TYPE_META.ocr;
-                                const Icon = meta.icon;
-                                return (
-                                  <div key={i} className={`rounded-lg border ${meta.border} ${meta.bg} p-2.5 space-y-1`}>
-                                    <div className="flex items-center gap-1.5">
-                                      <Icon className={`size-3 ${meta.color}`} />
-                                      <span className="text-xs font-medium text-foreground truncate">{src.documentName}</span>
-                                    </div>
-                                    {src.sectionLabel && (
-                                      <p className="text-xs text-muted-foreground">{src.sectionLabel}</p>
-                                    )}
-                                    <p className="text-xs text-muted-foreground leading-relaxed line-clamp-3">{src.excerpt}</p>
-                                  </div>
-                                );
-                              })}
-                            </motion.div>
-                          )}
-                        </AnimatePresence>
                       </div>
-                    )}
-                  </div>
-                </motion.div>
-              ))}
-            </AnimatePresence>
+                    </motion.div>
+                  ))}
+                </AnimatePresence>
 
-            {chatLoading && (
-              <div className="flex gap-3">
-                <div className="size-7 rounded-full bg-muted flex items-center justify-center shrink-0">
-                  <Bot className="size-3.5 text-muted-foreground" />
-                </div>
-                <div className="bg-muted rounded-2xl rounded-tl-sm px-4 py-3">
-                  <div className="flex items-center gap-1.5">
-                    <div className="size-1.5 rounded-full bg-muted-foreground animate-bounce" style={{ animationDelay: "0ms" }} />
-                    <div className="size-1.5 rounded-full bg-muted-foreground animate-bounce" style={{ animationDelay: "150ms" }} />
-                    <div className="size-1.5 rounded-full bg-muted-foreground animate-bounce" style={{ animationDelay: "300ms" }} />
+                {chatLoading && (
+                  <div className="bg-muted/30">
+                    <div className="max-w-3xl mx-auto px-4 py-6">
+                      <div className="flex gap-4">
+                        <div className="size-8 rounded-lg bg-card border border-border flex items-center justify-center shrink-0">
+                          <Bot className="size-4 text-muted-foreground" />
+                        </div>
+                        <div className="flex-1">
+                          <span className="text-sm font-semibold text-foreground block mb-2">ConstructAI</span>
+                          <div className="flex items-center gap-1">
+                            <div className="size-2 rounded-full bg-muted-foreground/40 animate-bounce" style={{ animationDelay: "0ms" }} />
+                            <div className="size-2 rounded-full bg-muted-foreground/40 animate-bounce" style={{ animationDelay: "150ms" }} />
+                            <div className="size-2 rounded-full bg-muted-foreground/40 animate-bounce" style={{ animationDelay: "300ms" }} />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
                   </div>
-                </div>
+                )}
               </div>
             )}
             <div ref={chatBottomRef} />
           </div>
 
-          {/* Chat input */}
-          <div className="border-t border-border p-4">
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={question}
-                onChange={(e) => setQuestion(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); askQuestion(); } }}
-                placeholder={hasIndexed ? "Ask a question about this project…" : "Add and index documents to start…"}
-                disabled={!hasIndexed || chatLoading}
-                className="flex-1 px-4 py-2.5 rounded-xl border border-input bg-background text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50"
-              />
-              <button
-                onClick={() => askQuestion()}
-                disabled={!question.trim() || !hasIndexed || chatLoading}
-                className="px-4 py-2.5 rounded-xl bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors flex items-center gap-2 text-sm font-medium"
-              >
-                {chatLoading ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
-              </button>
+          {/* Chat input — pinned bottom */}
+          <div className="border-t border-border bg-background">
+            <div className="max-w-3xl mx-auto px-4 py-4">
+              <div className="relative flex items-end rounded-2xl border border-border bg-card shadow-sm focus-within:border-primary/50 focus-within:ring-1 focus-within:ring-primary/20 transition-all">
+                <input
+                  type="text"
+                  value={question}
+                  onChange={(e) => setQuestion(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); askQuestion(); } }}
+                  placeholder={hasIndexed ? "Message ConstructAI…" : "Index documents to start chatting…"}
+                  disabled={!hasIndexed || chatLoading}
+                  className="flex-1 bg-transparent pl-4 pr-12 py-3.5 text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none disabled:opacity-50"
+                />
+                <button
+                  onClick={() => askQuestion()}
+                  disabled={!question.trim() || !hasIndexed || chatLoading}
+                  className="absolute right-2 bottom-2 size-8 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-30 disabled:hover:bg-primary transition-colors flex items-center justify-center"
+                >
+                  {chatLoading ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
+                </button>
+              </div>
+              <p className="text-[11px] text-muted-foreground/50 mt-2 text-center">
+                ConstructAI answers only from indexed project documents. Always verify critical values.
+              </p>
             </div>
-            <p className="text-xs text-muted-foreground mt-2">
-              Answers are grounded in indexed project documents only.
-            </p>
           </div>
         </div>
         )}
