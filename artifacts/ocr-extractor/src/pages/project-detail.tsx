@@ -23,6 +23,11 @@ import {
   Bot,
   User,
   Sparkles,
+  ThumbsUp,
+  ThumbsDown,
+  Shield,
+  ShieldAlert,
+  ShieldCheck,
 } from "lucide-react";
 
 const API_BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -53,6 +58,8 @@ type ChatMessage = {
   role: "user" | "assistant";
   content: string;
   sources?: ChatSource[] | null;
+  confidence?: number | null;
+  feedback?: "positive" | "negative" | null;
   createdAt: string;
 };
 
@@ -253,9 +260,10 @@ export default function ProjectDetailPage() {
       });
       if (!res.ok) throw new Error("Chat request failed");
       const data = await res.json();
+      const assistantMsg = { ...data.message, confidence: data.confidence ?? null };
       setMessages((prev) => {
         const withoutTemp = prev.filter((m) => m.id !== tempUserMsg.id);
-        return [...withoutTemp, { ...tempUserMsg, id: tempUserMsg.id }, data.message];
+        return [...withoutTemp, { ...tempUserMsg, id: tempUserMsg.id }, assistantMsg];
       });
     } catch (e) {
       const errMsg: ChatMessage = {
@@ -276,6 +284,30 @@ export default function ProjectDetailPage() {
     if (!confirm("Clear all chat history for this project?")) return;
     await fetch(`${API_BASE}/api/projects/${projectId}/chat`, { method: "DELETE" });
     setMessages([]);
+  }
+
+  async function submitFeedback(msgId: number, feedback: "positive" | "negative") {
+    try {
+      const res = await fetch(`${API_BASE}/api/projects/${projectId}/chat/${msgId}/feedback`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ feedback }),
+      });
+      if (!res.ok) {
+        console.error("Feedback submission failed:", res.status);
+        return;
+      }
+      setMessages((prev) => prev.map((m) => m.id === msgId ? { ...m, feedback } : m));
+    } catch (e) {
+      console.error("Failed to submit feedback:", e);
+    }
+  }
+
+  function getConfidenceDisplay(confidence: number | null | undefined) {
+    if (confidence == null) return null;
+    if (confidence >= 8) return { label: "High confidence", color: "text-green-600", bg: "bg-green-50 border-green-200", Icon: ShieldCheck };
+    if (confidence >= 5) return { label: "Medium confidence", color: "text-amber-600", bg: "bg-amber-50 border-amber-200", Icon: Shield };
+    return { label: "Low confidence", color: "text-red-600", bg: "bg-red-50 border-red-200", Icon: ShieldAlert };
   }
 
   function toggleSources(msgId: number) {
@@ -569,16 +601,47 @@ export default function ProjectDetailPage() {
                       <p className="whitespace-pre-wrap leading-relaxed">{msg.content}</p>
                     </div>
 
-                    {msg.role === "assistant" && msg.sources && msg.sources.length > 0 && (
-                      <div className="w-full">
-                        <button
-                          onClick={() => toggleSources(msg.id)}
-                          className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
-                        >
-                          <FileText className="size-3" />
-                          {msg.sources.length} source{msg.sources.length !== 1 ? "s" : ""}
-                          {expandedSources.has(msg.id) ? <ChevronUp className="size-3" /> : <ChevronDown className="size-3" />}
-                        </button>
+                    {msg.role === "assistant" && (
+                      <div className="w-full space-y-2">
+                        <div className="flex items-center gap-3">
+                          {msg.sources && msg.sources.length > 0 && (
+                            <button
+                              onClick={() => toggleSources(msg.id)}
+                              className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                            >
+                              <FileText className="size-3" />
+                              {msg.sources.length} source{msg.sources.length !== 1 ? "s" : ""}
+                              {expandedSources.has(msg.id) ? <ChevronUp className="size-3" /> : <ChevronDown className="size-3" />}
+                            </button>
+                          )}
+                          {(() => {
+                            const conf = getConfidenceDisplay(msg.confidence);
+                            if (!conf) return null;
+                            const ConfIcon = conf.Icon;
+                            return (
+                              <span className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border ${conf.bg} ${conf.color}`}>
+                                <ConfIcon className="size-3" />
+                                {conf.label} ({msg.confidence}/10)
+                              </span>
+                            );
+                          })()}
+                          <div className="flex items-center gap-1 ml-auto">
+                            <button
+                              onClick={() => submitFeedback(msg.id, "positive")}
+                              className={`p-1 rounded transition-colors ${msg.feedback === "positive" ? "text-green-600 bg-green-50" : "text-muted-foreground hover:text-green-600 hover:bg-green-50"}`}
+                              title="Correct answer"
+                            >
+                              <ThumbsUp className="size-3.5" />
+                            </button>
+                            <button
+                              onClick={() => submitFeedback(msg.id, "negative")}
+                              className={`p-1 rounded transition-colors ${msg.feedback === "negative" ? "text-red-600 bg-red-50" : "text-muted-foreground hover:text-red-600 hover:bg-red-50"}`}
+                              title="Incorrect answer"
+                            >
+                              <ThumbsDown className="size-3.5" />
+                            </button>
+                          </div>
+                        </div>
                         <AnimatePresence>
                           {expandedSources.has(msg.id) && (
                             <motion.div

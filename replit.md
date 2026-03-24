@@ -71,6 +71,10 @@ The project is organized as a pnpm monorepo using TypeScript 5.9, with a clear s
 -   **AI Reranking**: Top-25 retrieved chunks are scored 0-10 for relevance by GPT-4o before being passed to the answer model. This filters out noise and ensures the most relevant chunks from across different document sections reach the AI. Gracefully falls back to original ranking on failure.
 -   **Contextual AI**: Top reranked chunks (up to 15) passed to GPT-4o for final answer generation.
 -   **Safety and Anti-hallucination**: Temperature 0.05, 2000-token limit, system prompt enforces exact quoting, source citation, conflict flagging, terminology awareness, and data quality warnings. Explicitly states if no relevant chunks are found.
+-   **Confidence Scoring**: AI self-rates confidence 0–10 per answer (stripped from response, stored in DB). Frontend displays green/amber/red confidence badges.
+-   **User Feedback**: Thumbs up/down buttons on each assistant response. Negative feedback auto-catalogs the question for review. Feedback endpoint enforces project scoping (prevents IDOR).
+-   **Self-Healing Retry Cascade**: On search failure, attempts multiple strategies (hybrid_standard → simplified_query → proper_noun extraction) before returning "not found". Unanswered questions automatically logged to DB with strategies attempted, chunks found, and reason.
+-   **Unanswered Question Catalog**: `GET /:id/unanswered` and `PATCH /:id/unanswered/:questionId` endpoints for reviewing and resolving gaps.
 -   **Auto-validation**: `validateConstructionData()` runs during indexing, storing warnings (e.g., non-standard pipe sizes, ID gaps) as searchable chunks.
 
 ## UI/UX

@@ -66,6 +66,10 @@ export const projectChatsTable = pgTable("project_chats", {
   role: text("role").notNull(), // "user" | "assistant"
   content: text("content").notNull(),
   sources: jsonb("sources").$type<ChatSource[]>(),
+  confidence: real("confidence"),
+  searchStrategy: text("search_strategy"),
+  feedback: text("feedback"), // "positive" | "negative" | null
+  feedbackNote: text("feedback_note"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
@@ -78,3 +82,18 @@ export const chatSourceSchema = z.object({
 
 export type ChatSource = z.infer<typeof chatSourceSchema>;
 export type ProjectChat = typeof projectChatsTable.$inferSelect;
+
+export const unansweredQuestionsTable = pgTable("unanswered_questions", {
+  id: serial("id").primaryKey(),
+  projectId: integer("project_id").notNull(),
+  question: text("question").notNull(),
+  searchStrategiesAttempted: jsonb("search_strategies_attempted").$type<string[]>(),
+  chunksFound: integer("chunks_found").notNull().default(0),
+  reason: text("reason").notNull(), // "no_chunks" | "low_confidence" | "negative_feedback"
+  status: text("status").notNull().default("open"), // "open" | "resolved" | "acknowledged"
+  resolution: text("resolution"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  resolvedAt: timestamp("resolved_at"),
+});
+
+export type UnansweredQuestion = typeof unansweredQuestionsTable.$inferSelect;

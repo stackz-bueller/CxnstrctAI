@@ -9,8 +9,9 @@ import {
   constructionExtractionsTable,
   financialExtractionsTable,
   extractionsTable,
+  unansweredQuestionsTable,
 } from "@workspace/db";
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, desc, lt } from "drizzle-orm";
 import { z } from "zod";
 import { openai } from "@workspace/integrations-openai-ai-server";
 import { indexProjectDocument, keywordSearch, validateConstructionData } from "./indexer";
@@ -384,14 +385,57 @@ router.post("/:id/chat", async (req, res) => {
       return;
     }
 
-    const relevantChunks = await keywordSearch(projectId, question, 25);
-
     await db.insert(projectChatsTable).values({ projectId, role: "user", content: question, sources: [] });
 
+    const searchStrategies: string[] = [];
+    let relevantChunks = await keywordSearch(projectId, question, 25);
+    searchStrategies.push("hybrid_standard");
+
+    if (relevantChunks.length < 5) {
+      const words = question.toLowerCase().split(/\s+/).filter(w => w.length > 3);
+      if (words.length > 3) {
+        const simplifiedQ = words.slice(0, 4).join(" ");
+        const broaderChunks = await keywordSearch(projectId, simplifiedQ, 25);
+        searchStrategies.push("simplified_query");
+        const existingIds = new Set(relevantChunks.map(c => c.content.slice(0, 100)));
+        for (const c of broaderChunks) {
+          if (!existingIds.has(c.content.slice(0, 100))) {
+            relevantChunks.push(c);
+          }
+        }
+      }
+    }
+
+    if (relevantChunks.length < 3) {
+      const keyTerms = question.match(/\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b/g);
+      if (keyTerms && keyTerms.length > 0) {
+        for (const term of keyTerms.slice(0, 2)) {
+          const termChunks = await keywordSearch(projectId, term, 10);
+          searchStrategies.push(`proper_noun:${term}`);
+          const existingIds = new Set(relevantChunks.map(c => c.content.slice(0, 100)));
+          for (const c of termChunks) {
+            if (!existingIds.has(c.content.slice(0, 100))) {
+              relevantChunks.push(c);
+            }
+          }
+        }
+      }
+    }
+
     if (relevantChunks.length === 0) {
-      const reply = "I could not find relevant information in the project documents to answer that question. The documents may not contain this information, or the terms used may differ from what was extracted.";
-      const [msg] = await db.insert(projectChatsTable).values({ projectId, role: "assistant", content: reply, sources: [] }).returning();
-      res.json({ message: msg, sources: [] });
+      const reply = "I could not find relevant information in the project documents to answer that question. This question has been logged for review — the documents may not contain this information, or the terms used may differ from what was extracted.";
+      await db.insert(unansweredQuestionsTable).values({
+        projectId,
+        question,
+        searchStrategiesAttempted: searchStrategies,
+        chunksFound: 0,
+        reason: "no_chunks",
+      });
+      const [msg] = await db.insert(projectChatsTable).values({
+        projectId, role: "assistant", content: reply, sources: [],
+        confidence: 0, searchStrategy: searchStrategies.join(","),
+      }).returning();
+      res.json({ message: msg, sources: [], confidence: 0 });
       return;
     }
 
@@ -450,7 +494,16 @@ ABSOLUTE RULES:
 7. Be thorough: scan ALL provided excerpts before answering — the answer may be in a less obvious source. Construction documents use varied terminology (e.g., "invert" may appear as "bottom elevation", "rim" as "top elevation", "catch basin" as "inlet"). Report the data you find even if the terminology doesn't match the question exactly, and note the difference.
 8. When asked about project-level information (location, owner, engineer, contractor), distinguish between the construction SITE and the office/contact information. Prioritize the actual site data.
 
-FORMAT: Use clear structure. For tables, use markdown tables. For lists, use bullet points. Always end with source references.`;
+CONFIDENCE RATING:
+At the very end of your response, on a new line, write exactly: CONFIDENCE: X/10
+Where X is your self-assessed confidence from 0-10:
+- 9-10: Answer directly supported by clear, specific data in the excerpts
+- 7-8: Answer supported but some inference or terminology mapping needed
+- 4-6: Partial answer; key details missing or ambiguous in sources
+- 1-3: Very uncertain; minimal relevant data found
+- 0: Information not found
+
+FORMAT: Use clear structure. For tables, use markdown tables. For lists, use bullet points. Always end with source references, then the confidence rating.`;
 
     const userMessage = `Project documents (context only — do not answer outside this):\n\n${contextBlock}\n\n---\n\nQuestion: ${question}`;
 
@@ -464,7 +517,26 @@ FORMAT: Use clear structure. For tables, use markdown tables. For lists, use bul
       max_tokens: 2000,
     });
 
-    const answer = completion.choices[0]?.message?.content ?? "No response generated.";
+    let answer = completion.choices[0]?.message?.content ?? "No response generated.";
+
+    let confidence: number | null = null;
+    const confMatch = answer.match(/CONFIDENCE:\s*(\d+(?:\.\d+)?)\s*\/\s*10/i);
+    if (confMatch) {
+      confidence = parseFloat(confMatch[1]);
+      answer = answer.replace(/\n?\s*CONFIDENCE:\s*\d+(?:\.\d+)?\s*\/\s*10\s*$/i, "").trim();
+    }
+
+    const isNotFound = answer.includes("was not found in the project documents") || answer.includes("not found in the provided") || (confidence !== null && confidence <= 2);
+
+    if (isNotFound || (confidence !== null && confidence <= 3)) {
+      await db.insert(unansweredQuestionsTable).values({
+        projectId,
+        question,
+        searchStrategiesAttempted: searchStrategies,
+        chunksFound: usedChunks.length,
+        reason: isNotFound ? "no_chunks" : "low_confidence",
+      });
+    }
 
     const sources = usedChunks.slice(0, 5).map((c) => ({
       documentName: c.documentName,
@@ -475,13 +547,106 @@ FORMAT: Use clear structure. For tables, use markdown tables. For lists, use bul
 
     const [msg] = await db
       .insert(projectChatsTable)
-      .values({ projectId, role: "assistant", content: answer, sources })
+      .values({
+        projectId, role: "assistant", content: answer, sources,
+        confidence, searchStrategy: searchStrategies.join(","),
+      })
       .returning();
 
-    res.json({ message: msg, sources });
+    res.json({ message: msg, sources, confidence });
   } catch (err) {
     req.log.error({ err }, "Failed to process chat question");
     res.status(500).json({ error: "Failed to process question" });
+  }
+});
+
+router.post("/:id/chat/:chatId/feedback", async (req, res) => {
+  try {
+    const projectId = parseInt(req.params.id, 10);
+    const chatId = parseInt(req.params.chatId, 10);
+    const { feedback, note } = req.body as { feedback: "positive" | "negative"; note?: string };
+
+    if (!["positive", "negative"].includes(feedback)) {
+      res.status(400).json({ error: "Feedback must be 'positive' or 'negative'" });
+      return;
+    }
+
+    const [existing] = await db.select().from(projectChatsTable).where(
+      and(eq(projectChatsTable.id, chatId), eq(projectChatsTable.projectId, projectId))
+    );
+    if (!existing) {
+      res.status(404).json({ error: "Chat message not found" });
+      return;
+    }
+
+    await db.update(projectChatsTable)
+      .set({ feedback, feedbackNote: note || null })
+      .where(and(eq(projectChatsTable.id, chatId), eq(projectChatsTable.projectId, projectId)));
+
+    if (feedback === "negative") {
+      const [precedingUserMsg] = await db.select().from(projectChatsTable)
+        .where(and(
+          eq(projectChatsTable.projectId, projectId),
+          eq(projectChatsTable.role, "user"),
+          lt(projectChatsTable.id, chatId),
+        ))
+        .orderBy(desc(projectChatsTable.id))
+        .limit(1);
+
+      if (precedingUserMsg) {
+        await db.insert(unansweredQuestionsTable).values({
+          projectId,
+          question: precedingUserMsg.content,
+          searchStrategiesAttempted: ["user_reported_negative"],
+          chunksFound: 0,
+          reason: "negative_feedback",
+        });
+      }
+    }
+
+    res.json({ success: true });
+  } catch (err) {
+    req.log.error({ err }, "Failed to save feedback");
+    res.status(500).json({ error: "Failed to save feedback" });
+  }
+});
+
+router.get("/:id/unanswered", async (req, res) => {
+  try {
+    const projectId = parseInt(req.params.id, 10);
+    const items = await db.select().from(unansweredQuestionsTable)
+      .where(eq(unansweredQuestionsTable.projectId, projectId))
+      .orderBy(desc(unansweredQuestionsTable.createdAt));
+
+    res.json({ items });
+  } catch (err) {
+    req.log.error({ err }, "Failed to fetch unanswered questions");
+    res.status(500).json({ error: "Failed to fetch unanswered questions" });
+  }
+});
+
+router.patch("/:id/unanswered/:questionId", async (req, res) => {
+  try {
+    const questionId = parseInt(req.params.questionId, 10);
+    const { status, resolution } = req.body as { status: string; resolution?: string };
+
+    if (!["open", "resolved", "acknowledged"].includes(status)) {
+      res.status(400).json({ error: "Status must be 'open', 'resolved', or 'acknowledged'" });
+      return;
+    }
+
+    await db.update(unansweredQuestionsTable)
+      .set({
+        status,
+        resolution: resolution || null,
+        resolvedAt: status === "resolved" ? new Date() : null,
+      })
+      .where(eq(unansweredQuestionsTable.id, questionId));
+
+    res.json({ success: true });
+  } catch (err) {
+    req.log.error({ err }, "Failed to update unanswered question");
+    res.status(500).json({ error: "Failed to update" });
   }
 });
 
