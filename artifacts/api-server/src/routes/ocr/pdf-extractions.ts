@@ -9,6 +9,7 @@ import { constructionExtractionsTable, projectDocumentsTable } from "@workspace/
 import { GetPdfExtractionParams } from "@workspace/api-zod";
 import { eq } from "drizzle-orm";
 import { indexProjectDocument } from "../projects/indexer.js";
+import { checkExtractionIntegrity, repairIncompleteExtraction } from "../../lib/integrity.js";
 
 const router: IRouter = Router();
 
@@ -52,6 +53,26 @@ router.get("/", async (req, res) => {
   }
 });
 
+router.get("/integrity", async (req, res) => {
+  try {
+    const issues = await checkExtractionIntegrity();
+    res.json({
+      healthy: issues.length === 0,
+      incompleteCount: issues.length,
+      issues: issues.map((i) => ({
+        extractionId: i.extractionId,
+        fileName: i.fileName,
+        processedPages: i.processedPages,
+        totalPages: i.totalPages,
+        action: i.action,
+      })),
+    });
+  } catch (err) {
+    req.log.error({ err }, "Integrity check failed");
+    res.status(500).json({ error: "Integrity check failed" });
+  }
+});
+
 router.get("/:id", async (req, res) => {
   try {
     const { id } = GetPdfExtractionParams.parse({ id: parseInt(req.params.id) });
@@ -82,16 +103,20 @@ router.post("/upload", upload.single("file"), async (req, res) => {
     return;
   }
 
-  // Create a temp file for the PDF (Python script needs a file path)
+  const sanitizedName = file.originalname.replace(/[^a-zA-Z0-9._-]/g, "_");
+  const assetsDir = path.resolve(process.cwd(), "../../attached_assets");
+  if (!fs.existsSync(assetsDir)) fs.mkdirSync(assetsDir, { recursive: true });
+  const persistPath = path.join(assetsDir, sanitizedName);
+  fs.writeFileSync(persistPath, file.buffer);
+
   const tmpDir = os.tmpdir();
-  const tmpPath = path.join(tmpDir, `upload_${Date.now()}_${file.originalname.replace(/[^a-zA-Z0-9._-]/g, "_")}`);
+  const tmpPath = path.join(tmpDir, `upload_${Date.now()}_${sanitizedName}`);
   fs.writeFileSync(tmpPath, file.buffer);
 
-  // Create the extraction record immediately
   const [extraction] = await db
     .insert(constructionExtractionsTable)
     .values({
-      fileName: file.originalname,
+      fileName: sanitizedName,
       status: "processing",
       totalPages: 0,
       processedPages: 0,
@@ -422,6 +447,23 @@ router.post("/:id/reprocess", async (req, res) => {
         .where(eq(constructionExtractionsTable.id, id));
     }
   })();
+});
+
+router.post("/:id/repair", async (req, res) => {
+  const id = parseInt(req.params.id);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+
+  try {
+    const result = await repairIncompleteExtraction(id);
+    if (result.action === "repair_failed" && result.error?.includes("not found")) {
+      res.status(404).json(result);
+    } else {
+      res.json(result);
+    }
+  } catch (err) {
+    req.log.error({ err }, "Repair failed");
+    res.status(500).json({ error: "Repair failed" });
+  }
 });
 
 export default router;

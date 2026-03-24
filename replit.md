@@ -77,6 +77,12 @@ The project is organized as a pnpm monorepo using TypeScript 5.9, with a clear s
 -   **Self-Healing Retry Cascade**: On search failure, attempts multiple strategies (hybrid_standard → simplified_query → proper_noun extraction) before returning "not found". If confidence ≤ 3, auto-retries by using GPT to reformulate the question into 3-5 alternative search queries with domain-specific terminology, re-searches, and re-asks the LLM with the expanded context. Unanswered questions automatically logged to DB with strategies attempted, chunks found, and reason.
 -   **Unanswered Question Catalog**: `GET /:id/unanswered` and `PATCH /:id/unanswered/:questionId` endpoints for reviewing and resolving gaps.
 -   **Auto-validation**: `validateConstructionData()` runs during indexing, storing warnings (e.g., non-standard pipe sizes, ID gaps) as searchable chunks.
+-   **Extraction Integrity System** (`artifacts/api-server/src/lib/integrity.ts`):
+    -   **Startup check**: On every server boot, scans all construction extractions for `processedPages < totalPages` and marks mislabeled "completed" records as "incomplete".
+    -   **Auto-repair on attach**: When attaching a construction document to a project, if the extraction is incomplete, the system auto-repairs (re-extracts missing pages from the stored PDF) *before* indexing. Indexing only runs on fully extracted data.
+    -   **Persistent PDF storage**: All uploaded PDFs are persisted to `attached_assets/` with sanitized filenames matching the DB record, so re-extraction is always possible.
+    -   **API endpoints**: `GET /api/pdf-extractions/integrity` (health check), `POST /api/pdf-extractions/:id/repair` (trigger repair for a specific extraction).
+    -   **Filename consistency**: Both DB `fileName` and disk file use the same sanitized name (`[^a-zA-Z0-9._-]` → `_`), with fallback lookup for legacy records.
 
 ## UI/UX
 

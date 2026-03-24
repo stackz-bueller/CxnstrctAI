@@ -1,10 +1,11 @@
 import app from "./app";
 import { logger } from "./lib/logger";
 import { db } from "@workspace/db";
-import { documentChunksTable, projectDocumentsTable } from "@workspace/db";
-import { eq, isNull } from "drizzle-orm";
+import { documentChunksTable, projectDocumentsTable, constructionExtractionsTable } from "@workspace/db";
+import { eq, and, isNull } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 import { embed } from "./lib/embedder.js";
+import { repairIncompleteExtraction } from "./lib/integrity.js";
 
 const rawPort = process.env["PORT"];
 
@@ -32,6 +33,24 @@ async function resetStuckIndexing() {
     }
   } catch (err) {
     logger.error({ err }, "Failed to reset stuck indexing documents");
+  }
+}
+
+async function runIntegrityCheck() {
+  try {
+    const { checkExtractionIntegrity } = await import("./lib/integrity.js");
+    const issues = await checkExtractionIntegrity();
+    if (issues.length > 0) {
+      logger.warn({ count: issues.length, issues: issues.map((i) => ({
+        id: i.extractionId,
+        file: i.fileName,
+        pages: `${i.processedPages}/${i.totalPages}`,
+      })) }, "Found incomplete extractions on startup — marked as incomplete");
+    } else {
+      logger.info("Extraction integrity check passed — all extractions complete");
+    }
+  } catch (err) {
+    logger.error({ err }, "Extraction integrity check failed");
   }
 }
 
@@ -79,5 +98,6 @@ app.listen(port, async (err) => {
 
   logger.info({ port }, "Server listening");
   await resetStuckIndexing();
+  await runIntegrityCheck();
   backfillEmbeddings();
 });

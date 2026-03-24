@@ -16,6 +16,7 @@ import { z } from "zod";
 import { openai } from "@workspace/integrations-openai-ai-server";
 import { indexProjectDocument, keywordSearch, validateConstructionData } from "./indexer";
 import type { ConstructionPageResult } from "@workspace/db";
+import { repairIncompleteExtraction } from "../../lib/integrity.js";
 
 const router: IRouter = Router();
 
@@ -160,9 +161,22 @@ router.post("/:id/documents", async (req, res) => {
       if (!row) { res.status(404).json({ error: "Spec extraction not found" }); return; }
       documentName = row.fileName;
     } else if (documentType === "construction") {
-      const [row] = await db.select({ fileName: constructionExtractionsTable.fileName }).from(constructionExtractionsTable).where(eq(constructionExtractionsTable.id, documentId));
+      const [row] = await db.select({
+        fileName: constructionExtractionsTable.fileName,
+        status: constructionExtractionsTable.status,
+        totalPages: constructionExtractionsTable.totalPages,
+        processedPages: constructionExtractionsTable.processedPages,
+      }).from(constructionExtractionsTable).where(eq(constructionExtractionsTable.id, documentId));
       if (!row) { res.status(404).json({ error: "Construction extraction not found" }); return; }
       documentName = row.fileName;
+
+      if (row.totalPages > 0 && row.processedPages < row.totalPages) {
+        req.log.warn({
+          documentId,
+          processedPages: row.processedPages,
+          totalPages: row.totalPages,
+        }, "Incomplete extraction detected on attach — will auto-repair then index");
+      }
     } else if (documentType === "financial") {
       const [row] = await db.select({ fileName: financialExtractionsTable.fileName }).from(financialExtractionsTable).where(eq(financialExtractionsTable.id, documentId));
       if (!row) { res.status(404).json({ error: "Financial extraction not found" }); return; }
@@ -197,6 +211,19 @@ router.post("/:id/documents", async (req, res) => {
 
     (async () => {
       try {
+        if (documentType === "construction") {
+          const [check] = await db.select({
+            totalPages: constructionExtractionsTable.totalPages,
+            processedPages: constructionExtractionsTable.processedPages,
+          }).from(constructionExtractionsTable).where(eq(constructionExtractionsTable.id, documentId));
+
+          if (check && check.totalPages > 0 && check.processedPages < check.totalPages) {
+            req.log.info({ documentId }, "Auto-repairing incomplete extraction before indexing");
+            const repairResult = await repairIncompleteExtraction(documentId);
+            req.log.info({ repairResult: repairResult.action, pages: repairResult.processedPages, total: repairResult.totalPages }, "Auto-repair finished");
+          }
+        }
+
         await indexProjectDocument(projectId, projectDoc.id, documentType, documentId);
       } catch (err) {
         req.log.error({ err }, "Background indexing failed for project document");
