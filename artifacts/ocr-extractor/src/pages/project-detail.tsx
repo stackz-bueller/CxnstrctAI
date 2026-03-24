@@ -347,9 +347,9 @@ export default function ProjectDetailPage() {
   const hasIndexed = indexedCount > 0;
 
   return (
-    <div className="h-full flex flex-col gap-3 max-w-full mx-auto">
+    <div className="h-full flex flex-col max-w-full mx-auto">
       {/* Header */}
-      <div className="flex items-center gap-3 px-2 shrink-0 border-b border-border pb-3">
+      <div className="flex items-center gap-3 px-4 shrink-0 border-b border-border h-12">
         <button
           onClick={() => navigate("/")}
           className="size-8 rounded-lg flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors shrink-0"
@@ -379,7 +379,7 @@ export default function ProjectDetailPage() {
       <div className="flex-1 min-h-0">
         {/* ── Documents tab ── */}
         {activeTab === "documents" && (
-        <div className="h-full flex flex-col gap-4 overflow-y-auto">
+        <div className="h-full flex flex-col gap-4 overflow-y-auto p-4">
           <div className="rounded-xl border border-border bg-card p-4 space-y-3">
             <div className="flex items-center justify-between">
               <h2 className="font-semibold text-sm text-foreground flex items-center gap-2">
