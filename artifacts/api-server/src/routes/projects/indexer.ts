@@ -580,6 +580,34 @@ async function ftsSearch(projectId: number, question: string, topK: number): Pro
   }));
 }
 
+const CONSTRUCTION_SYNONYMS: Record<string, string[]> = {
+  "invert": ["invert", "bottom elevation", "invert elevation", "inv elev", "inv."],
+  "rim": ["rim", "rim elevation", "top elevation", "tc/rim", "tc elevation"],
+  "diameter": ["diameter", "size", "pipe size", "diam"],
+  "manhole": ["manhole", "mh", "junction box"],
+  "inlet": ["inlet", "catch basin", "cb"],
+  "bioretention": ["bioretention", "bio", "rain garden"],
+  "detention": ["detention", "detention basin", "subsurface detention"],
+  "seeding": ["seeding", "seed", "planting", "landscaping", "formula mix"],
+};
+
+function expandSynonyms(question: string): string {
+  const lower = question.toLowerCase();
+  const expansions: string[] = [];
+
+  for (const [term, synonyms] of Object.entries(CONSTRUCTION_SYNONYMS)) {
+    if (lower.includes(term)) {
+      for (const syn of synonyms) {
+        if (!lower.includes(syn)) {
+          expansions.push(syn);
+        }
+      }
+    }
+  }
+
+  return expansions.length > 0 ? question + " " + expansions.join(" ") : question;
+}
+
 function extractIdentifiers(question: string): string[] {
   const matches = question.match(/\b[A-Za-z]{1,4}\d*[-]?\d+[A-Za-z]?\b/g) || [];
   const cleaned = [...new Set(matches.map((m) => m.toUpperCase()))];
@@ -660,6 +688,7 @@ export async function keywordSearch(
   const FETCH_K = Math.max(topK * 3, 30);
   const RRF_K = 60;
 
+  const expandedQuestion = expandSynonyms(question);
   const identifiers = extractIdentifiers(question);
 
   let vectorResults: SearchRow[] = [];
@@ -671,8 +700,8 @@ export async function keywordSearch(
   if (embeddedCount > 0) {
     searches.push(
       Promise.all([
-        vectorSearch(projectId, question, FETCH_K),
-        ftsSearch(projectId, question, FETCH_K),
+        vectorSearch(projectId, expandedQuestion, FETCH_K),
+        ftsSearch(projectId, expandedQuestion, FETCH_K),
       ]).then(([v, f]) => { vectorResults = v; ftsResults = f; })
         .catch((e) => {
           console.error("Hybrid search error, falling back to FTS only:", e);
@@ -680,7 +709,7 @@ export async function keywordSearch(
         }),
     );
   } else {
-    searches.push(ftsSearch(projectId, question, FETCH_K).then((f) => { ftsResults = f; }));
+    searches.push(ftsSearch(projectId, expandedQuestion, FETCH_K).then((f) => { ftsResults = f; }));
   }
 
   if (identifiers.length > 0) {
