@@ -39,7 +39,7 @@ import pdf2image
 import httpx
 from openai import OpenAI
 
-MAX_PAGES = 150          # Process up to 150 pages — covers most full drawing sets
+MAX_PAGES = 2000         # No practical limit — process entire drawing sets
 DPI = 100                # 100 DPI — enough for large-format engineering drawings
 MAX_OCR_WIDTH = 1600     # Downscale images wider than this before Tesseract
 TILE_GRID = (2, 2)       # 2×2 = 4 tiles per page
@@ -692,7 +692,7 @@ def main():
         print(json.dumps({"error": f"Failed to read PDF: {str(e)}"}))
         sys.exit(1)
 
-    end_page = min(end_page_arg if end_page_arg else total_pages, MAX_PAGES, total_pages)
+    end_page = min(end_page_arg if end_page_arg else total_pages, total_pages)
     pages_to_process = range(start_page_arg, end_page + 1)
     results = []
 

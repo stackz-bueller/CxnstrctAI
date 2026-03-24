@@ -52,7 +52,7 @@ function detectPdf(pdfPath: string): Promise<DetectResult> {
 
 function runScript(scriptPath: string, args: string[]): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
-    const proc = spawn("python3", [scriptPath, ...args], { timeout: 20 * 60 * 1000 });
+    const proc = spawn("python3", [scriptPath, ...args], { timeout: 4 * 60 * 60 * 1000 });
     let stdout = "";
     let stderr = "";
     proc.stdout.on("data", (c: Buffer) => { stdout += c.toString(); });

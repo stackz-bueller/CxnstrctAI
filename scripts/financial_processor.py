@@ -34,7 +34,7 @@ except ImportError:
     HAS_PDF2IMAGE = False
 
 MIN_CHARS_FOR_TEXT_MODE = 100   # below this → vision mode
-MAX_PAGES = 25                   # max pages to process
+MAX_PAGES = 2000                  # no practical limit — process entire documents
 VISION_DPI = 150                 # DPI for converting PDF pages to images
 VISION_MAX_PX = 1600             # max image dimension for vision
 

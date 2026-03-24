@@ -130,7 +130,7 @@ function runSpecPipeline(
 ): Promise<{ total_pages: number; project_name: string; total_sections: number; sections: unknown[]; processing_time_ms: number }> {
   return new Promise((resolve, reject) => {
     const proc = spawn("python3", [scriptPath, pdfPath, aiBaseUrl, aiApiKey], {
-      timeout: 15 * 60 * 1000,
+      timeout: 4 * 60 * 60 * 1000,
     });
 
     let stdout = "";

@@ -103,26 +103,96 @@ router.post("/upload", upload.single("file"), async (req, res) => {
   // Return immediately with pending record, process in background
   res.json(formatExtraction(extraction));
 
-  // Run the Python pipeline in background
+  // Run the Python pipeline in background using streaming mode
   (async () => {
     try {
       const aiBaseUrl = process.env["AI_INTEGRATIONS_OPENAI_BASE_URL"] ?? "";
       const aiApiKey = process.env["AI_INTEGRATIONS_OPENAI_API_KEY"] ?? "";
       const scriptPath = path.resolve(process.cwd(), "../../scripts/pdf_processor.py");
 
-      const result = await runPythonPipeline(scriptPath, tmpPath, aiBaseUrl, aiApiKey);
+      const pagesMap = new Map<number, unknown>();
+      let totalPages = 0;
+      let processingTimeMs = 0;
+
+      await new Promise<void>((resolve, reject) => {
+        const proc = spawn("python3", [
+          scriptPath, tmpPath, aiBaseUrl, aiApiKey,
+          "1", "99999", "--stream",
+        ], { timeout: 4 * 60 * 60 * 1000 });
+
+        let lineBuffer = "";
+
+        const savePage = async (pageData: unknown) => {
+          const pg = pageData as { page_number: number };
+          pagesMap.set(pg.page_number, pg);
+          const allPages = Array.from(pagesMap.values()).sort(
+            (a, b) => (a as { page_number: number }).page_number - (b as { page_number: number }).page_number,
+          );
+          await db.update(constructionExtractionsTable)
+            .set({
+              processedPages: pagesMap.size,
+              pages: allPages as never,
+              totalPages,
+              processingTimeMs,
+              updatedAt: new Date(),
+            })
+            .where(eq(constructionExtractionsTable.id, extraction.id));
+          req.log.info({ extractionId: extraction.id, page: pg.page_number, saved: pagesMap.size, total: totalPages }, "Saved page to DB");
+        };
+
+        proc.stdout.on("data", (chunk: Buffer) => {
+          lineBuffer += chunk.toString();
+          const lines = lineBuffer.split("\n");
+          lineBuffer = lines.pop() ?? "";
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed) continue;
+            try {
+              const msg = JSON.parse(trimmed);
+              if (msg.type === "page") {
+                totalPages = msg.total_pages;
+                savePage(msg.page).catch((e) => req.log.error({ err: e }, "Failed to save page"));
+              } else if (msg.type === "done") {
+                totalPages = msg.total_pages;
+                processingTimeMs = msg.processing_time_ms;
+              }
+            } catch { /* skip non-JSON lines */ }
+          }
+        });
+
+        proc.stderr.on("data", (chunk: Buffer) => {
+          const text = chunk.toString().trim();
+          if (text) req.log.warn({ stderr: text.slice(0, 300) }, "Python stderr");
+        });
+
+        proc.on("close", (code, signal) => {
+          if (code !== 0 || signal) {
+            reject(new Error(`Python process ${signal ? `killed by signal ${signal}` : `exit code ${code}`}`));
+          } else {
+            resolve();
+          }
+        });
+
+        proc.on("error", (err) => reject(err));
+      });
+
+      const finalPages = Array.from(pagesMap.values()).sort(
+        (a, b) => (a as { page_number: number }).page_number - (b as { page_number: number }).page_number,
+      );
 
       await db
         .update(constructionExtractionsTable)
         .set({
-          status: "completed",
-          totalPages: result.total_pages,
-          processedPages: result.pages.length,
-          pages: result.pages,
-          processingTimeMs: result.processing_time_ms,
+          status: finalPages.length >= totalPages ? "completed" : "partial",
+          processedPages: finalPages.length,
+          pages: finalPages as never,
+          totalPages,
+          processingTimeMs,
           updatedAt: new Date(),
         })
         .where(eq(constructionExtractionsTable.id, extraction.id));
+
+      req.log.info({ extractionId: extraction.id, pages: finalPages.length, total: totalPages }, "Extraction complete");
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Unknown error";
       req.log.error({ err }, "PDF pipeline failed");
@@ -135,7 +205,6 @@ router.post("/upload", upload.single("file"), async (req, res) => {
         })
         .where(eq(constructionExtractionsTable.id, extraction.id));
     } finally {
-      // Clean up temp file
       try {
         fs.unlinkSync(tmpPath);
       } catch {
@@ -153,7 +222,7 @@ function runPythonPipeline(
 ): Promise<{ total_pages: number; processing_time_ms: number; pages: unknown[] }> {
   return new Promise((resolve, reject) => {
     const proc = spawn("python3", [scriptPath, pdfPath, aiBaseUrl, aiApiKey], {
-      timeout: 10 * 60 * 1000, // 10 min max
+      timeout: 4 * 60 * 60 * 1000, // 4 hours — full drawing sets can take a long time
     });
 
     let stdout = "";
@@ -252,8 +321,8 @@ router.post("/:id/reprocess", async (req, res) => {
       await new Promise<void>((resolve, reject) => {
         const proc = spawn("python3", [
           scriptPath, pdfPath, aiBaseUrl, aiApiKey,
-          String(startPage), "150", "--stream",
-        ], { timeout: 60 * 60 * 1000 });
+          String(startPage), "99999", "--stream",
+        ], { timeout: 4 * 60 * 60 * 1000 });
 
         let lineBuffer = "";
 

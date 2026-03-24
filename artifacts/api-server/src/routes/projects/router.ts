@@ -424,13 +424,49 @@ router.post("/:id/chat", async (req, res) => {
     }
 
     if (relevantChunks.length === 0) {
+      req.log.info({ question }, "Zero chunks found — attempting AI reformulation before giving up");
+      searchStrategies.push("zero_chunk_retry");
+      try {
+        const reformulateResult = await openai.chat.completions.create({
+          model: "gpt-4o",
+          messages: [
+            {
+              role: "system",
+              content: `You are a construction document search expert. A search returned ZERO results. Generate 3-5 alternative search queries using different terminology. Think about:
+- Different terminology (repoint vs tuckpoint, LF vs linear feet, UG vs undergrade vs bridge)
+- CSI section numbers where this info might live
+- Simpler keyword combinations
+Return ONLY a JSON array of search strings.`,
+            },
+            { role: "user", content: `Original question: "${question}"\nProject: ${project.name}` },
+          ],
+          temperature: 0.3,
+          max_tokens: 300,
+        });
+        const reformText = reformulateResult.choices[0]?.message?.content ?? "";
+        const arrMatch = reformText.match(/\[[\s\S]*?\]/);
+        let altQueries: string[] = [];
+        if (arrMatch) {
+          try { altQueries = JSON.parse(arrMatch[0]); } catch { /* ignore */ }
+        }
+        for (const altQ of altQueries.slice(0, 5)) {
+          const chunks = await keywordSearch(projectId, altQ, 15);
+          searchStrategies.push(`zr:${altQ.slice(0, 40)}`);
+          dedupeChunks(relevantChunks, chunks);
+        }
+      } catch (retryErr) {
+        req.log.error({ err: retryErr }, "Zero-chunk retry reformulation failed");
+      }
+    }
+
+    if (relevantChunks.length === 0) {
       const reply = "I could not find relevant information in the project documents to answer that question. This question has been logged for review — the documents may not contain this information, or the terms used may differ from what was extracted.";
       await db.insert(unansweredQuestionsTable).values({
         projectId,
         question,
         searchStrategiesAttempted: searchStrategies,
         chunksFound: 0,
-        reason: "no_chunks",
+        reason: "no_chunks_after_retry",
       });
       const [msg] = await db.insert(projectChatsTable).values({
         projectId, role: "assistant", content: reply, sources: [],

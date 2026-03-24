@@ -45,7 +45,7 @@ The project is organized as a pnpm monorepo using TypeScript 5.9, with a clear s
     7.  **Merging**: OCR and Vision results are merged, with Vision taking priority and OCR filling gaps.
 -   **Extracted fields**: Title block data, revision history, general notes, structured tables (compaction density, material schedules, pipe schedules), callouts, legends, full raw text.
 -   **PE Stamp Extraction**: Professional Engineer stamp data (name, license, discipline) is extracted via targeted right-edge crops of drawing pages. Stamps with signatures over printed names require focused crops for reliable OCR. PE data is injected into `all_text` as structured `PROFESSIONAL ENGINEER STAMP` blocks and indexed as dedicated searchable chunks per discipline (civil, electrical, plumbing/mechanical).
--   **Script**: `scripts/pdf_processor.py` (Python child process).
+-   **Script**: `scripts/pdf_processor.py` (Python child process). No page limit — processes entire drawing sets. Initial upload uses streaming mode (saves each page to DB as it's processed). 4-hour timeout to handle large sets.
 
 ### Specification Extraction Pipeline
 
@@ -67,13 +67,13 @@ The project is organized as a pnpm monorepo using TypeScript 5.9, with a clear s
     -   Full-text search (PostgreSQL tsvector, 1.0x weight)
     -   Identifier boost search (construction identifiers, 2.5x weight)
     Results merged via Reciprocal Rank Fusion (RRF) with source diversity enforcement (max 3 chunks per section to prevent single-section domination).
--   **Construction synonym expansion**: Search automatically expands domain-specific terms (e.g., "invert" → also searches "bottom elevation", "rim" → "top elevation", "located" → "site address, municipality, title block").
+-   **Construction synonym expansion**: Search automatically expands domain-specific terms (e.g., "invert" → also searches "bottom elevation", "rim" → "top elevation", "located" → "site address, municipality, title block", "LF" → "linear feet", "repoint" → "tuckpoint, mortar joint", plus quantity, masonry, bridge, and other construction terms).
 -   **AI Reranking**: Top-25 retrieved chunks are scored 0-10 for relevance by GPT-4o before being passed to the answer model. This filters out noise and ensures the most relevant chunks from across different document sections reach the AI. Gracefully falls back to original ranking on failure.
 -   **Contextual AI**: Top reranked chunks (up to 15) passed to GPT-4o for final answer generation.
 -   **Safety and Anti-hallucination**: Temperature 0.05, 2000-token limit, system prompt enforces exact quoting, source citation, conflict flagging, terminology awareness, and data quality warnings. Explicitly states if no relevant chunks are found.
 -   **Confidence Scoring**: AI self-rates confidence 0–10 per answer (stripped from response, stored in DB). Frontend displays green/amber/red confidence badges.
 -   **User Feedback**: Thumbs up/down buttons on each assistant response. Negative feedback auto-catalogs the question for review. Feedback endpoint enforces project scoping (prevents IDOR).
--   **Self-Healing Retry Cascade**: On search failure, attempts multiple strategies (hybrid_standard → simplified_query → proper_noun extraction) before returning "not found". Unanswered questions automatically logged to DB with strategies attempted, chunks found, and reason.
+-   **Self-Healing Retry Cascade**: On search failure, attempts multiple strategies (hybrid_standard → simplified_query → proper_noun extraction) before returning "not found". If confidence ≤ 3, auto-retries by using GPT to reformulate the question into 3-5 alternative search queries with domain-specific terminology, re-searches, and re-asks the LLM with the expanded context. Unanswered questions automatically logged to DB with strategies attempted, chunks found, and reason.
 -   **Unanswered Question Catalog**: `GET /:id/unanswered` and `PATCH /:id/unanswered/:questionId` endpoints for reviewing and resolving gaps.
 -   **Auto-validation**: `validateConstructionData()` runs during indexing, storing warnings (e.g., non-standard pipe sizes, ID gaps) as searchable chunks.
 

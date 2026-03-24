@@ -663,7 +663,11 @@ function expandSynonyms(question: string): string {
   const expansions: string[] = [];
 
   for (const [term, synonyms] of Object.entries(CONSTRUCTION_SYNONYMS)) {
-    if (lower.includes(term)) {
+    const pattern = term.length <= 3
+      ? new RegExp(`\\b${term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i")
+      : null;
+    const matched = pattern ? pattern.test(lower) : lower.includes(term);
+    if (matched) {
       for (const syn of synonyms) {
         if (!lower.includes(syn)) {
           expansions.push(syn);
