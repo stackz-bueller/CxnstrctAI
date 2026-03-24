@@ -124,24 +124,49 @@ function meanPool(hidden: Float32Array, mask: bigint[], seqLen: number): number[
   return Array.from(pool);
 }
 
+const EMBED_BATCH_SIZE = 16;
+
 export async function embed(texts: string[]): Promise<number[][]> {
   if (texts.length === 0) return [];
   const sess = await getSession();
   const ortLocal = ort!;
 
   const results: number[][] = [];
-  for (const text of texts) {
-    const { inputIds, attentionMask, tokenTypeIds } = tokenize(text.slice(0, 1000));
-    const len = inputIds.length;
+
+  for (let batchStart = 0; batchStart < texts.length; batchStart += EMBED_BATCH_SIZE) {
+    const batchTexts = texts.slice(batchStart, batchStart + EMBED_BATCH_SIZE);
+    const batchSize = batchTexts.length;
+
+    const allInputIds = new BigInt64Array(batchSize * MAX_LEN);
+    const allAttentionMask = new BigInt64Array(batchSize * MAX_LEN);
+    const allTokenTypeIds = new BigInt64Array(batchSize * MAX_LEN);
+    const masks: bigint[][] = [];
+
+    for (let i = 0; i < batchTexts.length; i++) {
+      const { inputIds, attentionMask, tokenTypeIds } = tokenize(batchTexts[i].slice(0, 1000));
+      const offset = i * MAX_LEN;
+      for (let j = 0; j < MAX_LEN; j++) {
+        allInputIds[offset + j] = inputIds[j];
+        allAttentionMask[offset + j] = attentionMask[j];
+        allTokenTypeIds[offset + j] = tokenTypeIds[j];
+      }
+      masks.push(attentionMask);
+    }
 
     const feed = {
-      input_ids: new ortLocal.Tensor("int64", BigInt64Array.from(inputIds), [1, len]),
-      attention_mask: new ortLocal.Tensor("int64", BigInt64Array.from(attentionMask), [1, len]),
-      token_type_ids: new ortLocal.Tensor("int64", BigInt64Array.from(tokenTypeIds), [1, len]),
+      input_ids: new ortLocal.Tensor("int64", allInputIds, [batchSize, MAX_LEN]),
+      attention_mask: new ortLocal.Tensor("int64", allAttentionMask, [batchSize, MAX_LEN]),
+      token_type_ids: new ortLocal.Tensor("int64", allTokenTypeIds, [batchSize, MAX_LEN]),
     };
     const out = await sess.run(feed);
     const hidden = out["last_hidden_state"].data as Float32Array;
-    results.push(meanPool(hidden, attentionMask, len));
+
+    for (let i = 0; i < batchSize; i++) {
+      const seqOffset = i * MAX_LEN * EMBED_DIM;
+      const seqHidden = hidden.subarray(seqOffset, seqOffset + MAX_LEN * EMBED_DIM);
+      results.push(meanPool(seqHidden, masks[i], MAX_LEN));
+    }
   }
+
   return results;
 }

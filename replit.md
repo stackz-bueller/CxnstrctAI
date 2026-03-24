@@ -45,6 +45,7 @@ The project is organized as a pnpm monorepo using TypeScript 5.9, with a clear s
     7.  **Merging**: OCR and Vision results are merged, with Vision taking priority and OCR filling gaps.
 -   **Extracted fields**: Title block data, revision history, general notes, structured tables (compaction density, material schedules, pipe schedules), callouts, legends, full raw text.
 -   **PE Stamp Extraction**: Professional Engineer stamp data (name, license, discipline) is extracted via targeted right-edge crops of drawing pages. Stamps with signatures over printed names require focused crops for reliable OCR. PE data is injected into `all_text` as structured `PROFESSIONAL ENGINEER STAMP` blocks and indexed as dedicated searchable chunks per discipline (civil, electrical, plumbing/mechanical).
+-   **Voided Page Detection**: GPT-4o Vision detects pages with large X marks, "VOID", "DELETED", "REMOVED", "SUPERSEDED", or "NOT USED" markings. Voided pages get `voided: true` flag and reason. Cover sheet X marks on sheet listings are noted in general_notes. Voided page chunks are tagged `[VOIDED/REMOVED FROM PROJECT]` in the index with a warning chunk, and the LLM system prompt instructs the AI to exclude voided data from current scope answers.
 -   **Script**: `scripts/pdf_processor.py` (Python child process). No page limit — processes entire drawing sets. Initial upload uses streaming mode (saves each page to DB as it's processed). 4-hour timeout to handle large sets.
 
 ### Specification Extraction Pipeline
@@ -61,7 +62,7 @@ The project is organized as a pnpm monorepo using TypeScript 5.9, with a clear s
 ## Project AI Agents (RAG Sidecar)
 
 -   **Project-scoped Q&A**: Answers questions based solely on indexed project documents.
--   **Indexing**: Documents are chunked (1500-char max, 150-char overlap), embedded locally using an `all-MiniLM-L6-v2` ONNX model, and stored in PostgreSQL (`vector(384)` with `pgvector` IVFFlat index). Table data gets dedicated chunks.
+-   **Indexing**: Documents are chunked (1500-char max, 150-char overlap), embedded locally using an `all-MiniLM-L6-v2` ONNX model, and stored in PostgreSQL (`vector(384)` with `pgvector` IVFFlat index). Table data gets dedicated chunks. Embeddings are batched (16 texts per ONNX inference pass) and SQL updates are batched (single CASE/IN UPDATE per batch) for performance. Non-finite embedding values (NaN/Inf) are filtered out before DB writes.
 -   **Hybrid Search**: Questions are embedded, and a parallel **triple-source hybrid search** is performed:
     -   Vector search (cosine similarity, 2.5x weight for general questions, 1.5x when identifiers detected)
     -   Full-text search (PostgreSQL tsvector, 1.0x weight)

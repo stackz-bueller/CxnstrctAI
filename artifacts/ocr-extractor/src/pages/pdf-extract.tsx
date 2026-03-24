@@ -151,15 +151,23 @@ function PageResultCard({ page }: { page: ConstructionPageResult }) {
         className="w-full flex items-center justify-between px-5 py-4 hover:bg-muted/30 transition-colors text-left"
       >
         <div className="flex items-center gap-3">
-          <div className="size-8 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center text-sm font-bold text-primary">
-            {page.page_number}
+          <div className={`size-8 rounded-lg flex items-center justify-center text-sm font-bold ${
+            (page as Record<string, unknown>).voided
+              ? "bg-red-500/20 border border-red-500/40 text-red-400"
+              : "bg-primary/10 border border-primary/20 text-primary"
+          }`}>
+            {(page as Record<string, unknown>).voided ? "X" : page.page_number}
           </div>
           <div>
-            <p className="text-sm font-semibold text-foreground">
+            <p className={`text-sm font-semibold ${(page as Record<string, unknown>).voided ? "text-red-400 line-through" : "text-foreground"}`}>
+              {(page as Record<string, unknown>).voided ? "[VOIDED] " : ""}
               {tb?.drawing_title || tb?.sheet_number || `Page ${page.page_number}`}
             </p>
             <p className="text-xs text-muted-foreground">
-              OCR confidence: {Math.round((page.ocr_confidence ?? 0) * 100)}% · {page.callouts.length} callouts · {page.general_notes.length} notes
+              {(page as Record<string, unknown>).voided
+                ? `Removed from project: ${(page as Record<string, unknown>).voided_reason || "Page crossed out"}`
+                : `OCR confidence: ${Math.round((page.ocr_confidence ?? 0) * 100)}% · ${page.callouts.length} callouts · ${page.general_notes.length} notes`
+              }
             </p>
           </div>
         </div>

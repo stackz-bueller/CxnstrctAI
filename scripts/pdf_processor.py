@@ -196,6 +196,8 @@ VISION_PROMPT = """You are a construction drawing analyst. Extract ALL readable 
 
 Return JSON with exactly this structure:
 {
+  "voided": false,
+  "voided_reason": null,
   "title_block": {
     "project_name": null,
     "drawing_title": null,
@@ -228,6 +230,8 @@ Return JSON with exactly this structure:
 }
 
 Rules:
+- VOIDED PAGE DETECTION IS CRITICAL: If the page has a large "X" drawn across it, or is crossed out, or has "VOID", "DELETED", "REMOVED", "SUPERSEDED", or "NOT USED" stamped on it, set "voided": true and "voided_reason" to a description (e.g. "Large X drawn across entire page", "Marked VOID"). Still extract all readable text even from voided pages.
+- On cover sheets or drawing index pages, look for X marks or strikethrough on individual sheet listings — note which sheets are marked as removed in the general_notes array (e.g. "Sheets marked as removed: S-101, S-102")
 - Extract EVERY piece of visible text — do not summarize, abbreviate, or skip anything
 - Return null for title_block fields not visible; return empty arrays for missing lists
 - Include every note, callout, label, dimension, specification, and table you can read
@@ -247,6 +251,8 @@ def vision_extract(client: OpenAI, img: Image.Image) -> dict:
     """Send an image tile to GPT-4o Vision and return structured JSON with timeout + retry."""
     b64 = pil_to_base64(img)
     empty = {
+        "voided": False,
+        "voided_reason": None,
         "title_block": {k: None for k in ["project_name","drawing_title","sheet_number","revision","date","drawn_by","scale","confidence"]},
         "revision_history": [],
         "general_notes": [],
@@ -487,6 +493,11 @@ def merge_results(ocr_data: dict, vision_data: dict) -> dict:
     """Merge OCR + Vision. Vision takes priority; OCR supplements all_text."""
     merged = dict(vision_data)
 
+    if "voided" not in merged:
+        merged["voided"] = False
+    if "voided_reason" not in merged:
+        merged["voided_reason"] = None
+
     vision_text = vision_data.get("all_text") or ""
     ocr_full_text = ocr_data.get("full_text", "")
     if ocr_full_text and len(ocr_full_text) > len(vision_text):
@@ -657,6 +668,8 @@ def process_page(page_num: int, pdf_path: str, client: OpenAI) -> dict:
         "legends": final.get("legends") or [],
         "all_text": final.get("all_text") or "",
         "ocr_confidence": ocr_data.get("ocr_confidence", 0.0),
+        "voided": bool(final.get("voided", False)),
+        "voided_reason": final.get("voided_reason"),
     }
 
     if merged_vision.get("_data_warnings"):

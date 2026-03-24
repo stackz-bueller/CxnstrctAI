@@ -47,6 +47,8 @@ export const constructionPageResultSchema = z.object({
   legends: z.array(constructionLegendSchema),
   all_text: z.string(),
   ocr_confidence: z.number(),
+  voided: z.boolean().optional().default(false),
+  voided_reason: z.string().optional(),
 });
 
 export type ConstructionPageResult = z.infer<typeof constructionPageResultSchema>;

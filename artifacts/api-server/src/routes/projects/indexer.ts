@@ -179,14 +179,18 @@ async function insertBatch(
   try {
     const texts = batch.map((c) => c.content);
     const vectors = await embed(texts);
+    const cases: string[] = [];
+    const ids: number[] = [];
     for (let i = 0; i < inserted.length; i++) {
       const vec = vectors[i];
-      if (!vec) continue;
-      await db.execute(sql`
-        UPDATE document_chunks
-        SET embedding = ${`[${vec.join(",")}]`}::vector
-        WHERE id = ${inserted[i].id}
-      `);
+      if (!vec || vec.some((v) => !Number.isFinite(v))) continue;
+      ids.push(inserted[i].id);
+      cases.push(`WHEN ${inserted[i].id} THEN '[${vec.join(",")}]'::vector`);
+    }
+    if (cases.length > 0) {
+      await db.execute(sql.raw(
+        `UPDATE document_chunks SET embedding = CASE id ${cases.join(" ")} END WHERE id IN (${ids.join(",")})`
+      ));
     }
   } catch (embErr) {
     console.error("Embedding generation failed for batch, storing without vectors:", embErr);
@@ -255,8 +259,18 @@ async function indexConstruction(
   const titleBlockSummaries: string[] = [];
 
   for (const page of pages) {
-    const label = `Drawing Page ${page.page_number}${page.title_block.drawing_title ? " – " + page.title_block.drawing_title : ""}${page.title_block.sheet_number ? " (" + page.title_block.sheet_number + ")" : ""}`;
+    const isVoided = !!(page as Record<string, unknown>).voided;
+    const voidedReason = ((page as Record<string, unknown>).voided_reason as string) || "Page crossed out / removed from project";
+    const voidPrefix = isVoided ? "[VOIDED/REMOVED FROM PROJECT] " : "";
+    const label = `${voidPrefix}Drawing Page ${page.page_number}${page.title_block.drawing_title ? " – " + page.title_block.drawing_title : ""}${page.title_block.sheet_number ? " (" + page.title_block.sheet_number + ")" : ""}`;
     const pending: Array<{ content: string; sectionLabel: string }> = [];
+
+    if (isVoided) {
+      pending.push({
+        content: `${label}\n⚠️ THIS PAGE HAS BEEN VOIDED/REMOVED FROM THE PROJECT. Reason: ${voidedReason}. Data from this page should NOT be used for current project scope, quantities, or specifications. It represents work that was removed or superseded.`,
+        sectionLabel: label,
+      });
+    }
 
     const tb = page.title_block;
     if (tb) {
