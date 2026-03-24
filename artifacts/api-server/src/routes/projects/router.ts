@@ -413,6 +413,7 @@ ABSOLUTE RULES:
 7. Standard pipe diameters are: 4", 6", 8", 10", 12", 15", 18", 21", 24", 27", 30", 36", 42", 48", 54", 60", 72". If a non-standard size appears in the data, flag it as potentially misread.
 8. Pipe IDs follow phase conventions: P1-xx (Phase 1/DB1), P2-xx (Phase 2/DB2), P3-xx (Phase 3/DB3).
 9. When a user asks for a term that may have an equivalent in the documents (e.g., "invert" vs "bottom elevation", "rim" vs "top elevation", "catch basin" vs "inlet"), proactively check and report related fields that answer the same intent, noting the terminology difference.
+10. When asked about project location, distinguish between the CONSTRUCTION SITE address (from title blocks, cover sheets, site plans) and the ENGINEER/ARCHITECT OFFICE address (from contact information blocks). Always prioritize the site location. Report the full site address, municipality/borough/township, county, and state.
 
 FORMAT: Use clear structure. For tables, use markdown tables. For lists, use bullet points. Always end with source references.`;
 

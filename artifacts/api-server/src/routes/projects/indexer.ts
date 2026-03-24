@@ -589,6 +589,9 @@ const CONSTRUCTION_SYNONYMS: Record<string, string[]> = {
   "bioretention": ["bioretention", "bio", "rain garden"],
   "detention": ["detention", "detention basin", "subsurface detention"],
   "seeding": ["seeding", "seed", "planting", "landscaping", "formula mix"],
+  "located": ["located", "location", "site address", "street", "municipality", "borough", "township", "county", "state", "title block", "cover sheet", "site plan"],
+  "address": ["address", "site address", "street", "avenue", "location", "title block", "site plan"],
+  "where": ["location", "site address", "municipality", "county", "title block"],
 };
 
 function expandSynonyms(question: string): string {
