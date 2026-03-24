@@ -688,7 +688,7 @@ export async function keywordSearch(
   `);
   const embeddedCount = Number(hasEmbedding.rows[0]?.cnt ?? 0);
 
-  const FETCH_K = Math.max(topK * 3, 30);
+  const FETCH_K = Math.max(topK * 3, 50);
   const RRF_K = 60;
 
   const expandedQuestion = expandSynonyms(question);
@@ -728,9 +728,10 @@ export async function keywordSearch(
   const scoreMap = new Map<string, { row: SearchRow; rrf: number }>();
   const key = (r: SearchRow) => r.content.slice(0, 120);
 
-  const VECTOR_WEIGHT = 1.5;
+  const hasIds = identifiers.length > 0;
+  const VECTOR_WEIGHT = hasIds ? 1.5 : 2.5;
   const FTS_WEIGHT = 1.0;
-  const ID_WEIGHT = 2.0;
+  const ID_WEIGHT = 2.5;
 
   vectorResults.forEach((row, rank) => {
     const k = key(row);
@@ -765,8 +766,30 @@ export async function keywordSearch(
     }
   });
 
-  return Array.from(scoreMap.values())
-    .sort((a, b) => b.rrf - a.rrf)
-    .slice(0, topK)
-    .map((entry) => ({ ...entry.row, score: entry.rrf }));
+  const ranked = Array.from(scoreMap.values())
+    .sort((a, b) => b.rrf - a.rrf);
+
+  const selected: Array<{ row: SearchRow; rrf: number }> = [];
+  const sectionCounts = new Map<string, number>();
+  const MAX_PER_SECTION = 3;
+
+  for (const entry of ranked) {
+    if (selected.length >= topK) break;
+    const section = entry.row.sectionLabel || entry.row.documentName;
+    const count = sectionCounts.get(section) || 0;
+    if (count >= MAX_PER_SECTION) continue;
+    selected.push(entry);
+    sectionCounts.set(section, count + 1);
+  }
+
+  if (selected.length < topK) {
+    for (const entry of ranked) {
+      if (selected.length >= topK) break;
+      if (!selected.includes(entry)) {
+        selected.push(entry);
+      }
+    }
+  }
+
+  return selected.map((entry) => ({ ...entry.row, score: entry.rrf }));
 }

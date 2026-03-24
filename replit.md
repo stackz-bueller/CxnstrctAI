@@ -62,12 +62,14 @@ The project is organized as a pnpm monorepo using TypeScript 5.9, with a clear s
 -   **Project-scoped Q&A**: Answers questions based solely on indexed project documents.
 -   **Indexing**: Documents are chunked (1500-char max, 150-char overlap), embedded locally using an `all-MiniLM-L6-v2` ONNX model, and stored in PostgreSQL (`vector(384)` with `pgvector` IVFFlat index). Table data gets dedicated chunks.
 -   **Hybrid Search**: Questions are embedded, and a parallel **triple-source hybrid search** is performed:
-    -   Vector search (cosine similarity, 1.5x weight)
+    -   Vector search (cosine similarity, 2.5x weight for general questions, 1.5x when identifiers detected)
     -   Full-text search (PostgreSQL tsvector, 1.0x weight)
-    -   Identifier boost search (construction identifiers, 2.0x weight)
-    Results merged via Reciprocal Rank Fusion (RRF).
--   **Contextual AI**: Top-15 chunks passed to GPT-4o.
--   **Safety and Anti-hallucination**: Temperature 0.05, 2000-token limit, system prompt enforces exact quoting, source citation, conflict flagging, and data quality warnings. Explicitly states if no relevant chunks are found.
+    -   Identifier boost search (construction identifiers, 2.5x weight)
+    Results merged via Reciprocal Rank Fusion (RRF) with source diversity enforcement (max 3 chunks per section to prevent single-section domination).
+-   **Construction synonym expansion**: Search automatically expands domain-specific terms (e.g., "invert" → also searches "bottom elevation", "rim" → "top elevation", "located" → "site address, municipality, title block").
+-   **AI Reranking**: Top-25 retrieved chunks are scored 0-10 for relevance by GPT-4o before being passed to the answer model. This filters out noise and ensures the most relevant chunks from across different document sections reach the AI. Gracefully falls back to original ranking on failure.
+-   **Contextual AI**: Top reranked chunks (up to 15) passed to GPT-4o for final answer generation.
+-   **Safety and Anti-hallucination**: Temperature 0.05, 2000-token limit, system prompt enforces exact quoting, source citation, conflict flagging, terminology awareness, and data quality warnings. Explicitly states if no relevant chunks are found.
 -   **Auto-validation**: `validateConstructionData()` runs during indexing, storing warnings (e.g., non-standard pipe sizes, ID gaps) as searchable chunks.
 
 ## UI/UX

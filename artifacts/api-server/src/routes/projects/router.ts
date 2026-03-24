@@ -384,7 +384,7 @@ router.post("/:id/chat", async (req, res) => {
       return;
     }
 
-    const relevantChunks = await keywordSearch(projectId, question, 15);
+    const relevantChunks = await keywordSearch(projectId, question, 25);
 
     await db.insert(projectChatsTable).values({ projectId, role: "user", content: question, sources: [] });
 
@@ -395,7 +395,44 @@ router.post("/:id/chat", async (req, res) => {
       return;
     }
 
-    const usedChunks = relevantChunks;
+    let usedChunks = relevantChunks;
+
+    if (relevantChunks.length > 12) {
+      try {
+        const rerankPrompt = `Given this question: "${question}"
+
+Rate each document chunk below from 0-10 for relevance. Return ONLY a JSON array of numbers, one score per chunk, in order. Example: [8, 2, 9, 0, ...]
+
+Chunks:
+${relevantChunks.map((c, i) => `[${i}] ${c.content.slice(0, 400)}`).join("\n\n")}`;
+
+        const rerankResult = await openai.chat.completions.create({
+          model: "gpt-4o",
+          messages: [{ role: "user", content: rerankPrompt }],
+          temperature: 0,
+          max_tokens: 200,
+        });
+
+        const scoresText = rerankResult.choices[0]?.message?.content ?? "";
+        const scoresMatch = scoresText.match(/\[[\d\s,]+\]/);
+        if (scoresMatch) {
+          const scores: number[] = JSON.parse(scoresMatch[0]);
+          if (scores.length === relevantChunks.length) {
+            const scored = relevantChunks.map((c, i) => ({ chunk: c, score: scores[i] ?? 0 }));
+            scored.sort((a, b) => b.score - a.score);
+            usedChunks = scored
+              .filter((s) => s.score >= 3)
+              .slice(0, 15)
+              .map((s) => s.chunk);
+            if (usedChunks.length < 5) {
+              usedChunks = scored.slice(0, 10).map((s) => s.chunk);
+            }
+          }
+        }
+      } catch (rerankErr) {
+        console.error("Rerank failed, using original ranking:", rerankErr);
+      }
+    }
 
     const contextBlock = usedChunks
       .map((c, i) => `[Source ${i + 1}: ${c.documentName}${c.sectionLabel ? " / " + c.sectionLabel : ""}]\n${c.content}`)
@@ -408,12 +445,10 @@ ABSOLUTE RULES:
 2. If the documents do not contain the answer, say "This information was not found in the project documents" — do NOT guess.
 3. When citing numbers (dimensions, quantities, diameters, PSI values, densities, percentages), quote the EXACT value from the source. Never round, approximate, or paraphrase numerical data.
 4. Always cite the source document and section/page for every factual claim.
-5. If the source data contains DATA QUALITY WARNINGS, you MUST mention relevant warnings in your answer — the user needs to know if there are known gaps, conflicts, or non-standard values in the extracted data.
-6. If multiple sources give conflicting values for the same item, report ALL values and flag the conflict explicitly.
-7. Standard pipe diameters are: 4", 6", 8", 10", 12", 15", 18", 21", 24", 27", 30", 36", 42", 48", 54", 60", 72". If a non-standard size appears in the data, flag it as potentially misread.
-8. Pipe IDs follow phase conventions: P1-xx (Phase 1/DB1), P2-xx (Phase 2/DB2), P3-xx (Phase 3/DB3).
-9. When a user asks for a term that may have an equivalent in the documents (e.g., "invert" vs "bottom elevation", "rim" vs "top elevation", "catch basin" vs "inlet"), proactively check and report related fields that answer the same intent, noting the terminology difference.
-10. When asked about project location, distinguish between the CONSTRUCTION SITE address (from title blocks, cover sheets, site plans) and the ENGINEER/ARCHITECT OFFICE address (from contact information blocks). Always prioritize the site location. Report the full site address, municipality/borough/township, county, and state.
+5. If multiple sources give conflicting values for the same item, report ALL values and flag the conflict explicitly.
+6. If the source data contains DATA QUALITY WARNINGS, mention relevant warnings so the user knows about known gaps or conflicts.
+7. Be thorough: scan ALL provided excerpts before answering — the answer may be in a less obvious source. Construction documents use varied terminology (e.g., "invert" may appear as "bottom elevation", "rim" as "top elevation", "catch basin" as "inlet"). Report the data you find even if the terminology doesn't match the question exactly, and note the difference.
+8. When asked about project-level information (location, owner, engineer, contractor), distinguish between the construction SITE and the office/contact information. Prioritize the actual site data.
 
 FORMAT: Use clear structure. For tables, use markdown tables. For lists, use bullet points. Always end with source references.`;
 
