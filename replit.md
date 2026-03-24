@@ -79,12 +79,10 @@ The project is organized as a pnpm monorepo using TypeScript 5.9, with a clear s
 
 ## UI/UX
 
-The `ocr-extractor` React application provides interfaces for:
--   Document extraction (schema selection, drag-and-drop upload).
--   Viewing construction PDF extraction results (per-page, expandable).
--   Managing document schemas.
--   Reviewing extraction history and details (field values, confidence, raw OCR).
--   Project management and RAG chat interface.
+The frontend is branded as **ConstructAI** and focuses on the AI assistant experience. Document processing features (OCR, PDF extraction, specs, schemas, history) are hidden from the navigation and routes. The visible interface includes:
+-   **Projects list** (home page `/`): Create, view, and manage construction projects.
+-   **Project detail** (`/projects/:id`): AI chat assistant with confidence badges, thumbs up/down feedback, source citations, and document management tabs.
+-   Document processing APIs remain available for backend use but are not exposed in the UI navigation.
 
 ## API Endpoints
 

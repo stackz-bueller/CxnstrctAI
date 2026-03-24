@@ -12,7 +12,7 @@ export default function NotFound() {
         </p>
         <div className="pt-4">
           <Link 
-            href="/extract" 
+            href="/" 
             className="inline-flex px-6 py-3 bg-primary text-primary-foreground font-semibold rounded-xl hover:bg-primary/90 transition-colors"
           >
             Return to Dashboard

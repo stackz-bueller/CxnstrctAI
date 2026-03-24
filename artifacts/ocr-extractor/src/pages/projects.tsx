@@ -92,13 +92,13 @@ export default function ProjectsPage() {
       <div className="flex items-start justify-between">
         <div>
           <h1 className="text-2xl font-bold text-foreground flex items-center gap-3">
-            <div className="size-10 rounded-xl bg-orange-500/10 flex items-center justify-center border border-orange-500/20">
-              <HardHat className="size-5 text-orange-500" />
+            <div className="size-10 rounded-xl bg-primary/10 flex items-center justify-center border border-primary/20">
+              <HardHat className="size-5 text-primary" />
             </div>
-            Project AI Agents
+            Your Projects
           </h1>
           <p className="mt-1 text-muted-foreground text-sm">
-            Each project is an isolated AI assistant trained on its own plans, specs, and documents.
+            Each project has its own AI assistant trained on the attached plans, specs, and documents.
           </p>
         </div>
         <button
@@ -200,8 +200,8 @@ export default function ProjectsPage() {
               onClick={() => navigate(`/projects/${project.id}`)}
               className="group flex items-center gap-4 p-4 rounded-xl border border-border bg-card hover:border-primary/30 hover:bg-primary/5 cursor-pointer transition-all"
             >
-              <div className="size-10 rounded-xl bg-orange-500/10 border border-orange-500/20 flex items-center justify-center shrink-0">
-                <HardHat className="size-5 text-orange-500" />
+              <div className="size-10 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center shrink-0">
+                <HardHat className="size-5 text-primary" />
               </div>
               <div className="flex-1 min-w-0">
                 <p className="font-semibold text-foreground truncate">{project.name}</p>

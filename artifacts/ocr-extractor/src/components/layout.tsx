@@ -1,6 +1,6 @@
 import { ReactNode } from "react";
 import { Link, useLocation } from "wouter";
-import { Layers, History, ScanLine, HardHat, BookOpen, Sparkles, Settings, Receipt, FolderOpen } from "lucide-react";
+import { HardHat, FolderOpen, MessageSquare } from "lucide-react";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
 
@@ -12,26 +12,22 @@ export function Layout({ children }: { children: ReactNode }) {
   const [location] = useLocation();
 
   const navItems = [
-    { href: "/", label: "Smart Upload", icon: Sparkles },
-    { href: "/extract", label: "Image OCR", icon: ScanLine },
-    { href: "/pdf-extract", label: "Construction PDF", icon: HardHat },
-    { href: "/spec-extract", label: "Specifications", icon: BookOpen },
-    { href: "/financial-extract", label: "Financial Docs", icon: Receipt },
-    { href: "/schemas", label: "Document Schemas", icon: Layers },
-    { href: "/history", label: "History", icon: History },
-    { href: "/projects", label: "Project AI Agents", icon: FolderOpen },
+    { href: "/", label: "Projects", icon: FolderOpen },
   ];
 
   return (
     <div className="min-h-screen bg-background flex flex-col md:flex-row">
       <aside className="w-full md:w-64 bg-sidebar border-r border-sidebar-border flex flex-col shrink-0">
         <div className="p-6">
-          <div className="flex items-center gap-3 font-display font-bold text-xl text-foreground">
-            <div className="size-8 rounded-lg bg-primary/20 flex items-center justify-center border border-primary/30">
-              <ScanLine className="size-5 text-primary" />
+          <Link href="/">
+            <div className="flex items-center gap-3 font-display font-bold text-xl text-foreground cursor-pointer">
+              <div className="size-8 rounded-lg bg-primary/20 flex items-center justify-center border border-primary/30">
+                <HardHat className="size-5 text-primary" />
+              </div>
+              ConstructAI
             </div>
-            SchemaOCR
-          </div>
+          </Link>
+          <p className="text-xs text-muted-foreground mt-2 pl-11">AI assistant for construction documents</p>
         </div>
 
         <nav className="flex-1 px-4 space-y-1 overflow-y-auto">
@@ -58,12 +54,12 @@ export function Layout({ children }: { children: ReactNode }) {
         <div className="p-4 mt-auto">
           <div className="p-4 rounded-xl bg-card border border-border/50 shadow-inner">
             <div className="flex items-center gap-3">
-              <div className="size-10 rounded-full bg-muted flex items-center justify-center border border-border">
-                <Settings className="size-5 text-muted-foreground" />
+              <div className="size-10 rounded-full bg-primary/10 flex items-center justify-center border border-primary/20">
+                <MessageSquare className="size-5 text-primary" />
               </div>
               <div className="flex flex-col">
-                <span className="text-sm font-medium">Pipeline Tool</span>
-                <span className="text-xs text-muted-foreground">v0.1.0-alpha</span>
+                <span className="text-sm font-medium">ConstructAI</span>
+                <span className="text-xs text-muted-foreground">v1.0</span>
               </div>
             </div>
           </div>
