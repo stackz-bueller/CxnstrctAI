@@ -1,4 +1,6 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, type ComponentProps } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { useLocation, useParams } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -598,7 +600,26 @@ export default function ProjectDetailPage() {
                   </div>
                   <div className={`flex-1 max-w-[85%] space-y-2 ${msg.role === "user" ? "items-end" : "items-start"} flex flex-col`}>
                     <div className={`rounded-2xl px-4 py-3 text-sm ${msg.role === "user" ? "bg-primary text-primary-foreground rounded-tr-sm" : "bg-muted text-foreground rounded-tl-sm"}`}>
-                      <p className="whitespace-pre-wrap leading-relaxed">{msg.content}</p>
+                      {msg.role === "assistant" ? (
+                        <div className="prose prose-sm prose-invert max-w-none leading-relaxed
+                          prose-p:my-1.5 prose-p:leading-relaxed
+                          prose-headings:mt-3 prose-headings:mb-1.5 prose-headings:font-semibold prose-headings:text-foreground
+                          prose-h3:text-sm prose-h3:font-semibold
+                          prose-strong:text-foreground prose-strong:font-semibold
+                          prose-ul:my-1.5 prose-ul:pl-4 prose-ol:my-1.5 prose-ol:pl-4
+                          prose-li:my-0.5 prose-li:leading-relaxed
+                          prose-table:my-2 prose-table:text-xs
+                          prose-th:px-3 prose-th:py-1.5 prose-th:text-left prose-th:font-semibold prose-th:border prose-th:border-border prose-th:bg-card prose-th:text-foreground
+                          prose-td:px-3 prose-td:py-1.5 prose-td:border prose-td:border-border prose-td:text-muted-foreground
+                          prose-hr:my-3 prose-hr:border-border
+                          prose-code:text-xs prose-code:bg-card prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:text-foreground
+                          prose-a:text-primary prose-a:no-underline hover:prose-a:underline
+                        ">
+                          <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+                        </div>
+                      ) : (
+                        <p className="whitespace-pre-wrap leading-relaxed">{msg.content}</p>
+                      )}
                     </div>
 
                     {msg.role === "assistant" && (
