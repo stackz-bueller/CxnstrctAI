@@ -1,0 +1,8 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "3tqPWY2kbWCXC4AqYJTh-"
+uri = "file://ConstructAI_Data_Privacy_Whitepaper.pdf"
+type = "pdf"
+title = "ConstructAI Data Privacy & AI Infrastructure Whitepaper"
