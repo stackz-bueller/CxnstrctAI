@@ -640,6 +640,22 @@ const CONSTRUCTION_SYNONYMS: Record<string, string[]> = {
   "pe": ["professional engineer", "PE stamp", "PE license", "engineer of record", "sealed"],
   "who": ["engineer", "professional engineer", "drawn by", "designed by", "prepared by", "PE stamp"],
   "stamped": ["stamped", "sealed", "professional engineer", "PE stamp", "engineer of record"],
+  "lf": ["lf", "linear feet", "linear foot", "lineal feet", "lin ft", "l.f."],
+  "sf": ["sf", "square feet", "square foot", "sq ft", "s.f."],
+  "cy": ["cy", "cubic yards", "cubic yard", "cu yd", "c.y."],
+  "sy": ["sy", "square yards", "square yard", "sq yd", "s.y."],
+  "ls": ["ls", "lump sum", "l.s."],
+  "ea": ["ea", "each"],
+  "repoint": ["repoint", "repointing", "pointing", "tuckpoint", "tuckpointing", "mortar joint", "joint repair"],
+  "masonry": ["masonry", "stone", "brick", "mortar", "repoint", "tuckpoint", "veneer"],
+  "quantity": ["quantity", "qty", "total", "amount", "measurement", "pay item", "bid item", "line item", "schedule of values"],
+  "concrete": ["concrete", "cast-in-place", "CIP", "reinforced concrete", "structural concrete"],
+  "rebar": ["rebar", "reinforcing", "reinforcement", "reinforcing steel", "bar"],
+  "excavation": ["excavation", "earthwork", "grading", "cut", "fill", "backfill"],
+  "demolition": ["demolition", "removal", "remove", "dismantle", "abatement"],
+  "waterproofing": ["waterproofing", "membrane", "dampproofing", "coating", "sealant"],
+  "restoration": ["restoration", "rehabilitation", "repair", "reconstruction"],
+  "bridge": ["bridge", "undergrade", "overgrade", "UG", "OG", "span", "structure"],
 };
 
 function expandSynonyms(question: string): string {

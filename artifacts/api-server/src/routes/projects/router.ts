@@ -388,7 +388,18 @@ router.post("/:id/chat", async (req, res) => {
     await db.insert(projectChatsTable).values({ projectId, role: "user", content: question, sources: [] });
 
     const searchStrategies: string[] = [];
-    let relevantChunks = await keywordSearch(projectId, question, 25);
+
+    function dedupeChunks(existing: typeof relevantChunks, incoming: typeof relevantChunks) {
+      const seen = new Set(existing.map(c => c.content.slice(0, 120)));
+      for (const c of incoming) {
+        if (!seen.has(c.content.slice(0, 120))) {
+          existing.push(c);
+          seen.add(c.content.slice(0, 120));
+        }
+      }
+    }
+
+    let relevantChunks = await keywordSearch(projectId, question, 30);
     searchStrategies.push("hybrid_standard");
 
     if (relevantChunks.length < 5) {
@@ -397,12 +408,7 @@ router.post("/:id/chat", async (req, res) => {
         const simplifiedQ = words.slice(0, 4).join(" ");
         const broaderChunks = await keywordSearch(projectId, simplifiedQ, 25);
         searchStrategies.push("simplified_query");
-        const existingIds = new Set(relevantChunks.map(c => c.content.slice(0, 100)));
-        for (const c of broaderChunks) {
-          if (!existingIds.has(c.content.slice(0, 100))) {
-            relevantChunks.push(c);
-          }
-        }
+        dedupeChunks(relevantChunks, broaderChunks);
       }
     }
 
@@ -412,12 +418,7 @@ router.post("/:id/chat", async (req, res) => {
         for (const term of keyTerms.slice(0, 2)) {
           const termChunks = await keywordSearch(projectId, term, 10);
           searchStrategies.push(`proper_noun:${term}`);
-          const existingIds = new Set(relevantChunks.map(c => c.content.slice(0, 100)));
-          for (const c of termChunks) {
-            if (!existingIds.has(c.content.slice(0, 100))) {
-              relevantChunks.push(c);
-            }
-          }
+          dedupeChunks(relevantChunks, termChunks);
         }
       }
     }
@@ -439,16 +440,15 @@ router.post("/:id/chat", async (req, res) => {
       return;
     }
 
-    let usedChunks = relevantChunks;
-
-    if (relevantChunks.length > 12) {
+    async function rerankChunks(chunks: typeof relevantChunks, q: string) {
+      if (chunks.length <= 12) return chunks;
       try {
-        const rerankPrompt = `Given this question: "${question}"
+        const rerankPrompt = `Given this question: "${q}"
 
 Rate each document chunk below from 0-10 for relevance. Return ONLY a JSON array of numbers, one score per chunk, in order. Example: [8, 2, 9, 0, ...]
 
 Chunks:
-${relevantChunks.map((c, i) => `[${i}] ${c.content.slice(0, 400)}`).join("\n\n")}`;
+${chunks.map((c, i) => `[${i}] ${c.content.slice(0, 400)}`).join("\n\n")}`;
 
         const rerankResult = await openai.chat.completions.create({
           model: "gpt-4o",
@@ -461,28 +461,27 @@ ${relevantChunks.map((c, i) => `[${i}] ${c.content.slice(0, 400)}`).join("\n\n")
         const scoresMatch = scoresText.match(/\[[\d\s,]+\]/);
         if (scoresMatch) {
           const scores: number[] = JSON.parse(scoresMatch[0]);
-          if (scores.length === relevantChunks.length) {
-            const scored = relevantChunks.map((c, i) => ({ chunk: c, score: scores[i] ?? 0 }));
+          if (scores.length === chunks.length) {
+            const scored = chunks.map((c, i) => ({ chunk: c, score: scores[i] ?? 0 }));
             scored.sort((a, b) => b.score - a.score);
-            usedChunks = scored
+            let result = scored
               .filter((s) => s.score >= 3)
               .slice(0, 15)
               .map((s) => s.chunk);
-            if (usedChunks.length < 5) {
-              usedChunks = scored.slice(0, 10).map((s) => s.chunk);
+            if (result.length < 5) {
+              result = scored.slice(0, 10).map((s) => s.chunk);
             }
+            return result;
           }
         }
       } catch (rerankErr) {
         console.error("Rerank failed, using original ranking:", rerankErr);
       }
+      return chunks.slice(0, 15);
     }
 
-    const contextBlock = usedChunks
-      .map((c, i) => `[Source ${i + 1}: ${c.documentName}${c.sectionLabel ? " / " + c.sectionLabel : ""}]\n${c.content}`)
-      .join("\n\n---\n\n");
-
-    const systemPrompt = `You are a construction project assistant for the project "${project.name}". Lives and millions of dollars depend on the accuracy of your answers.
+    function buildSystemPrompt(projectName: string) {
+      return `You are a construction project assistant for the project "${projectName}". Lives and millions of dollars depend on the accuracy of your answers.
 
 ABSOLUTE RULES:
 1. Answer ONLY from the provided document excerpts. NEVER use outside knowledge or invent any value.
@@ -504,37 +503,115 @@ Where X is your self-assessed confidence from 0-10:
 - 0: Information not found
 
 FORMAT: Use clear structure. For tables, use markdown tables. For lists, use bullet points. Always end with source references, then the confidence rating.`;
-
-    const userMessage = `Project documents (context only — do not answer outside this):\n\n${contextBlock}\n\n---\n\nQuestion: ${question}`;
-
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4o",
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userMessage },
-      ],
-      temperature: 0.05,
-      max_tokens: 2000,
-    });
-
-    let answer = completion.choices[0]?.message?.content ?? "No response generated.";
-
-    let confidence: number | null = null;
-    const confMatch = answer.match(/CONFIDENCE:\s*(\d+(?:\.\d+)?)\s*\/\s*10/i);
-    if (confMatch) {
-      confidence = parseFloat(confMatch[1]);
-      answer = answer.replace(/\n?\s*CONFIDENCE:\s*\d+(?:\.\d+)?\s*\/\s*10\s*$/i, "").trim();
     }
+
+    function buildContextBlock(chunks: typeof relevantChunks) {
+      return chunks
+        .map((c, i) => `[Source ${i + 1}: ${c.documentName}${c.sectionLabel ? " / " + c.sectionLabel : ""}]\n${c.content}`)
+        .join("\n\n---\n\n");
+    }
+
+    async function askLLM(systemPrompt: string, context: string, q: string) {
+      const userMessage = `Project documents (context only — do not answer outside this):\n\n${context}\n\n---\n\nQuestion: ${q}`;
+      const completion = await openai.chat.completions.create({
+        model: "gpt-4o",
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userMessage },
+        ],
+        temperature: 0.05,
+        max_tokens: 2000,
+      });
+      let answer = completion.choices[0]?.message?.content ?? "No response generated.";
+      let confidence: number | null = null;
+      const confMatch = answer.match(/CONFIDENCE:\s*(\d+(?:\.\d+)?)\s*\/\s*10/i);
+      if (confMatch) {
+        confidence = parseFloat(confMatch[1]);
+        answer = answer.replace(/\n?\s*CONFIDENCE:\s*\d+(?:\.\d+)?\s*\/\s*10\s*$/i, "").trim();
+      }
+      return { answer, confidence };
+    }
+
+    let usedChunks = await rerankChunks(relevantChunks, question);
+    const sysPrompt = buildSystemPrompt(project.name);
+    let { answer, confidence } = await askLLM(sysPrompt, buildContextBlock(usedChunks), question);
 
     const isNotFound = answer.includes("was not found in the project documents") || answer.includes("not found in the provided") || (confidence !== null && confidence <= 2);
 
     if (isNotFound || (confidence !== null && confidence <= 3)) {
+      req.log.info({ confidence, question }, "Low confidence — initiating auto-retry with AI reformulation");
+      searchStrategies.push("auto_retry");
+
+      try {
+        const reformulateResult = await openai.chat.completions.create({
+          model: "gpt-4o",
+          messages: [
+            {
+              role: "system",
+              content: `You are a construction document search expert. The user asked a question but the search didn't find the answer. Generate 3-5 alternative search queries that might find the answer in construction specs, drawings, or bid documents. Think about:
+- Different terminology (repoint vs tuckpoint, LF vs linear feet)
+- The data might be in a bid schedule, measurement and payment section, schedule of values, or quantity takeoff
+- Section numbers or CSI codes where this info lives
+- The identifier might appear differently (UG 4.87 vs Bridge 4.87 vs undergrade 4.87)
+Return ONLY a JSON array of search strings. Example: ["masonry repointing quantities bridge 4.87", "measurement payment repoint linear feet"]`,
+            },
+            { role: "user", content: `Original question: "${question}"\nProject: ${project.name}\nChunks found but unhelpful: ${usedChunks.length}` },
+          ],
+          temperature: 0.3,
+          max_tokens: 300,
+        });
+
+        const reformText = reformulateResult.choices[0]?.message?.content ?? "";
+        const arrMatch = reformText.match(/\[[\s\S]*?\]/);
+        let altQueries: string[] = [];
+        if (arrMatch) {
+          try { altQueries = JSON.parse(arrMatch[0]); } catch { /* ignore parse errors */ }
+        }
+
+        if (altQueries.length > 0) {
+          const retryChunks: typeof relevantChunks = [];
+          for (const altQ of altQueries.slice(0, 5)) {
+            const chunks = await keywordSearch(projectId, altQ, 15);
+            searchStrategies.push(`retry:${altQ.slice(0, 40)}`);
+            dedupeChunks(retryChunks, chunks);
+          }
+
+          const allRetryChunks = [...retryChunks];
+          dedupeChunks(allRetryChunks, usedChunks);
+
+          if (allRetryChunks.length > usedChunks.length) {
+            req.log.info({ newChunks: allRetryChunks.length - usedChunks.length }, "Auto-retry found additional chunks");
+            const rerankedRetry = await rerankChunks(allRetryChunks, question);
+            const retryResult = await askLLM(sysPrompt, buildContextBlock(rerankedRetry), question);
+
+            if (
+              (retryResult.confidence !== null && confidence !== null && retryResult.confidence > confidence) ||
+              (retryResult.confidence !== null && retryResult.confidence > 3)
+            ) {
+              answer = retryResult.answer;
+              confidence = retryResult.confidence;
+              usedChunks = rerankedRetry;
+              searchStrategies.push("retry_accepted");
+              req.log.info({ newConfidence: confidence }, "Auto-retry improved answer");
+            } else {
+              searchStrategies.push("retry_no_improvement");
+            }
+          }
+        }
+      } catch (retryErr) {
+        req.log.error({ err: retryErr }, "Auto-retry failed");
+        searchStrategies.push("retry_failed");
+      }
+    }
+
+    const finalNotFound = answer.includes("was not found in the project documents") || answer.includes("not found in the provided") || (confidence !== null && confidence <= 2);
+    if (finalNotFound || (confidence !== null && confidence <= 3)) {
       await db.insert(unansweredQuestionsTable).values({
         projectId,
         question,
         searchStrategiesAttempted: searchStrategies,
         chunksFound: usedChunks.length,
-        reason: isNotFound ? "no_chunks" : "low_confidence",
+        reason: finalNotFound ? "not_found_after_retry" : "low_confidence_after_retry",
       });
     }
 
