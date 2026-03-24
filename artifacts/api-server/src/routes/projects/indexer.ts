@@ -69,7 +69,7 @@ export function validateConstructionData(pages: ConstructionPageResult[]): DataQ
         }
       }
 
-      if (rows.length >= 10 && isPipeTable) {
+      if (rows.length >= 15 && isPipeTable) {
         const lastRow = rows[rows.length - 1];
         const lastId = lastRow[0] || "";
         const lastMatch = lastId.match(/^([A-Za-z]+\d*)-(\d+)$/);
@@ -80,15 +80,16 @@ export function validateConstructionData(pages: ConstructionPageResult[]): DataQ
           const maxNum = Math.max(...prefixEntries.map(e => e.num), lastNum);
           if (maxNum === lastNum && lastNum > 1) {
             const seqNums = prefixEntries.map(e => e.num).sort((a, b) => a - b);
-            const consecutive = seqNums.length >= 3 &&
-              seqNums[seqNums.length - 1] - seqNums[seqNums.length - 2] === 1 &&
-              seqNums[seqNums.length - 2] - seqNums[seqNums.length - 3] === 1;
-            if (consecutive) {
+            const expectedCount = seqNums[seqNums.length - 1] - seqNums[0] + 1;
+            const actualCount = seqNums.length;
+            const isSuspiciouslyRound = rows.length % 5 === 0 || rows.length % 10 === 0;
+            const hasMissingEntries = actualCount < expectedCount * 0.85;
+            if (isSuspiciouslyRound || hasMissingEntries) {
               warnings.push({
                 type: "truncated_table",
                 page: page.page_number,
                 table: title,
-                detail: `Table ends at ${lastId} with ${rows.length} rows — verify no data was cut off after the last entry`,
+                detail: `Table ends at ${lastId} with ${rows.length} rows (expected ~${expectedCount} based on ID range) — verify no data was cut off`,
               });
             }
           }
@@ -287,6 +288,31 @@ async function indexConstruction(
       await insertBatch(projectId, projectDocumentId, "construction", documentId, pending, totalIndexed);
       totalIndexed += pending.length;
     }
+  }
+
+  const allWarnings: string[] = [];
+
+  const validationWarnings = validateConstructionData(pages);
+  for (const w of validationWarnings) {
+    allWarnings.push(`[${w.type}] Page ${w.page}, ${w.table}: ${w.detail}`);
+  }
+
+  for (const page of pages) {
+    const pageAny = page as Record<string, unknown>;
+    const extractionWarnings = pageAny._data_warnings;
+    if (Array.isArray(extractionWarnings)) {
+      for (const ew of extractionWarnings) {
+        allWarnings.push(`[extraction_conflict] Page ${page.page_number}: ${ew}`);
+      }
+    }
+  }
+
+  if (allWarnings.length > 0) {
+    const warningText = `DATA QUALITY WARNINGS (auto-generated during indexing):\n` +
+      allWarnings.map((w) => `- ${w}`).join("\n");
+    const warningChunks = makeChunks(warningText, "Data Quality Warnings");
+    await insertBatch(projectId, projectDocumentId, "construction", documentId, warningChunks, totalIndexed);
+    totalIndexed += warningChunks.length;
   }
 
   return totalIndexed;

@@ -401,9 +401,19 @@ router.post("/:id/chat", async (req, res) => {
       .map((c, i) => `[Source ${i + 1}: ${c.documentName}${c.sectionLabel ? " / " + c.sectionLabel : ""}]\n${c.content}`)
       .join("\n\n---\n\n");
 
-    const systemPrompt = `You are a construction project assistant for the project "${project.name}". You answer questions ONLY using the provided document excerpts. Do not use outside knowledge or invent values. If the documents do not contain the answer, say so clearly.
+    const systemPrompt = `You are a construction project assistant for the project "${project.name}". Lives and millions of dollars depend on the accuracy of your answers.
 
-When citing information, reference the source document and section. Be precise with numbers, ranges, and specifications — accuracy is critical for construction decisions.`;
+ABSOLUTE RULES:
+1. Answer ONLY from the provided document excerpts. NEVER use outside knowledge or invent any value.
+2. If the documents do not contain the answer, say "This information was not found in the project documents" — do NOT guess.
+3. When citing numbers (dimensions, quantities, diameters, PSI values, densities, percentages), quote the EXACT value from the source. Never round, approximate, or paraphrase numerical data.
+4. Always cite the source document and section/page for every factual claim.
+5. If the source data contains DATA QUALITY WARNINGS, you MUST mention relevant warnings in your answer — the user needs to know if there are known gaps, conflicts, or non-standard values in the extracted data.
+6. If multiple sources give conflicting values for the same item, report ALL values and flag the conflict explicitly.
+7. Standard pipe diameters are: 4", 6", 8", 10", 12", 15", 18", 21", 24", 27", 30", 36", 42", 48", 54", 60", 72". If a non-standard size appears in the data, flag it as potentially misread.
+8. Pipe IDs follow phase conventions: P1-xx (Phase 1/DB1), P2-xx (Phase 2/DB2), P3-xx (Phase 3/DB3).
+
+FORMAT: Use clear structure. For tables, use markdown tables. For lists, use bullet points. Always end with source references.`;
 
     const userMessage = `Project documents (context only — do not answer outside this):\n\n${contextBlock}\n\n---\n\nQuestion: ${question}`;
 
@@ -413,8 +423,8 @@ When citing information, reference the source document and section. Be precise w
         { role: "system", content: systemPrompt },
         { role: "user", content: userMessage },
       ],
-      temperature: 0.1,
-      max_tokens: 1000,
+      temperature: 0.05,
+      max_tokens: 2000,
     });
 
     const answer = completion.choices[0]?.message?.content ?? "No response generated.";

@@ -47,6 +47,15 @@ TILE_OVERLAP = 0.12      # 12% overlap between tiles — prevents boundary conte
 VISION_MAX_PX = 2000     # Max width for vision images sent to GPT-4o (full page)
 VISION_MAX_TOKENS = 4096 # Response token limit for GPT-4o (full page, single call)
 MIN_OCR_CHARS_FOR_VISION = 100  # Skip vision if OCR text shorter than this (nearly blank page)
+TABLE_ROW_THRESHOLD = 8  # If full-page extraction gets >= this many table rows, do multi-crop verification
+STANDARD_PIPE_SIZES = {4, 6, 8, 10, 12, 15, 18, 21, 24, 27, 30, 36, 42, 48, 54, 60, 72}
+
+MULTI_CROP_REGIONS = [
+    ("top-left",     (0.0,  0.0,  0.55, 0.55)),
+    ("top-right",    (0.45, 0.0,  1.0,  0.55)),
+    ("bottom-left",  (0.0,  0.45, 0.55, 1.0)),
+    ("bottom-right", (0.45, 0.45, 1.0,  1.0)),
+]
 
 
 def get_page_count(pdf_path: str) -> int:
@@ -273,6 +282,207 @@ def vision_extract(client: OpenAI, img: Image.Image) -> dict:
     return empty
 
 
+def count_table_rows(vision_data: dict) -> int:
+    total = 0
+    for t in vision_data.get("tables", []):
+        total += len(t.get("rows", []))
+    return total
+
+
+def has_table_content(vision_data: dict) -> bool:
+    return count_table_rows(vision_data) >= TABLE_ROW_THRESHOLD
+
+
+def validate_pipe_diameters(tables: list) -> list:
+    warnings = []
+    for t in tables:
+        title = (t.get("title") or "").lower()
+        if "pipe" not in title:
+            continue
+        headers = [h.lower() for h in (t.get("headers") or [])]
+        diam_idx = -1
+        for i, h in enumerate(headers):
+            if "diam" in h or "size" in h:
+                diam_idx = i
+                break
+        if diam_idx < 0:
+            continue
+        for row in t.get("rows", []):
+            if diam_idx >= len(row):
+                continue
+            try:
+                val = str(row[diam_idx]).replace('"', '').replace("'", '').strip()
+                diam = int(float(val))
+            except (ValueError, TypeError):
+                continue
+            if 0 < diam <= 120 and diam not in STANDARD_PIPE_SIZES:
+                pipe_id = row[0] if row else "?"
+                warnings.append(f"{pipe_id}={diam}\"")
+    return warnings
+
+
+def check_sequential_gaps(tables: list) -> list:
+    all_ids: dict[str, list[int]] = {}
+    for t in tables:
+        for row in t.get("rows", []):
+            pid = row[0] if row else ""
+            m = re.match(r'^([A-Za-z]+\d*)-(\d+)$', pid)
+            if m:
+                prefix = m.group(1).upper()
+                num = int(m.group(2))
+                all_ids.setdefault(prefix, []).append(num)
+
+    gaps = []
+    for prefix, nums in all_ids.items():
+        nums.sort()
+        for i in range(1, len(nums)):
+            diff = nums[i] - nums[i-1]
+            if diff > 1 and diff <= 5:
+                missing = [f"{prefix}-{str(n).zfill(2)}" for n in range(nums[i-1]+1, nums[i])]
+                gaps.append(f"Gap: {', '.join(missing)}")
+    return gaps
+
+
+def extract_table_from_crop(client: OpenAI, page: Image.Image, region_name: str,
+                            crop_box: tuple, max_px: int = 2400) -> dict:
+    left = int(page.width * crop_box[0])
+    top = int(page.height * crop_box[1])
+    right = int(page.width * crop_box[2])
+    bottom = int(page.height * crop_box[3])
+    cropped = page.crop((left, top, right, bottom))
+
+    if cropped.width > max_px:
+        ratio = max_px / cropped.width
+        cropped = cropped.resize((max_px, int(cropped.height * ratio)), Image.LANCZOS)
+
+    prompt = """Extract ALL tables from this image section completely. Return JSON:
+{"tables":[{"title":"...","headers":[...],"rows":[[...]]}],"all_text":"all visible text"}
+
+CRITICAL RULES:
+- Extract EVERY row of EVERY table. Do NOT stop early or truncate.
+- Pipe diameters are standard sizes only: 4, 6, 8, 10, 12, 15, 18, 21, 24, 27, 30, 36, 42, 48, 54, 60, 72 inches
+- If a number looks like 17, it is most likely 12 or 18. If it looks like 13, it is most likely 12 or 15. Re-examine carefully.
+- Preserve exact IDs as written (P1-01, P2-03, MH-4, EXIN-5, OGS-1, etc.)
+- Include ALL columns for each row — do not skip any cells
+- If a value is unclear, use "?" rather than guessing"""
+
+    b64 = pil_to_base64(cropped, max_width=max_px)
+    del cropped
+
+    empty = {"tables": [], "all_text": ""}
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            max_tokens=VISION_MAX_TOKENS,
+            messages=[{
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}}
+                ]
+            }]
+        )
+        content = response.choices[0].message.content or ""
+        content = content.strip()
+        if content.startswith("```"):
+            content = re.sub(r'^```json?\s*', '', content)
+            content = re.sub(r'```\s*$', '', content)
+
+        first_brace = content.find('{')
+        if first_brace >= 0:
+            raw = content[first_brace:]
+            try:
+                return json.loads(raw)
+            except json.JSONDecodeError:
+                raw = raw.rstrip().rstrip(',')
+                for suffix in ['"}]}', ']]]}', ']}]}', '"]}', ']}', '}']:
+                    try:
+                        return json.loads(raw + suffix)
+                    except json.JSONDecodeError:
+                        continue
+    except Exception as e:
+        print(f"  Crop {region_name} error: {e}", file=sys.stderr)
+    return empty
+
+
+def merge_table_extractions(full_page: dict, crop_results: list[tuple[str, dict]]) -> dict:
+    all_rows_by_table: dict[str, dict] = {}
+    anon_counter = [0]
+
+    def normalize_title(t: str) -> str:
+        return re.sub(r'\s+', ' ', t.strip().upper())
+
+    def row_key(row: list) -> str:
+        first = (row[0] if row else "").strip().upper()
+        if first:
+            return first
+        cell_hash = "|".join(str(c).strip() for c in row).upper()
+        if cell_hash.replace("|", "").strip():
+            return f"__ANON_{cell_hash}"
+        anon_counter[0] += 1
+        return f"__EMPTY_{anon_counter[0]}"
+
+    for source_name, data in [("full_page", full_page)] + crop_results:
+        for table in data.get("tables", []):
+            title = normalize_title(table.get("title", "UNTITLED"))
+            if title not in all_rows_by_table:
+                all_rows_by_table[title] = {
+                    "title": table.get("title", ""),
+                    "headers": table.get("headers", []),
+                    "rows": {},
+                    "sources": set(),
+                }
+            entry = all_rows_by_table[title]
+            if table.get("headers") and len(table["headers"]) > len(entry["headers"]):
+                entry["headers"] = table["headers"]
+            for row in table.get("rows", []):
+                rk = row_key(row)
+                if rk not in entry["rows"]:
+                    entry["rows"][rk] = {"data": row, "sources": {source_name}, "conflicts": []}
+                else:
+                    existing = entry["rows"][rk]
+                    existing["sources"].add(source_name)
+                    if row != existing["data"]:
+                        diffs = []
+                        max_cols = max(len(row), len(existing["data"]))
+                        for ci in range(max_cols):
+                            old_val = str(existing["data"][ci]).strip() if ci < len(existing["data"]) else ""
+                            new_val = str(row[ci]).strip() if ci < len(row) else ""
+                            if old_val != new_val:
+                                diffs.append(f"col{ci}: '{old_val}' vs '{new_val}'")
+                        if diffs:
+                            existing["conflicts"].append({"source": source_name, "diffs": diffs, "row": row})
+                        if len(row) > len(existing["data"]):
+                            existing["conflicts"][-1]["row"] = existing["data"]
+                            existing["data"] = row
+            entry["sources"].add(source_name)
+
+    merged_tables = []
+    all_warnings = []
+    for title, entry in all_rows_by_table.items():
+        sorted_rows = sorted(entry["rows"].values(), key=lambda r: r["data"][0] if r["data"] else "")
+        final_rows = []
+        for rinfo in sorted_rows:
+            if rinfo["conflicts"]:
+                rid = rinfo["data"][0] if rinfo["data"] else "?"
+                for conflict in rinfo["conflicts"]:
+                    all_warnings.append(
+                        f"CONFLICT on {rid} in '{entry['title']}': {'; '.join(conflict['diffs'])}"
+                    )
+            final_rows.append(rinfo["data"])
+
+        merged_tables.append({
+            "title": entry["title"],
+            "headers": entry["headers"],
+            "rows": final_rows,
+            "raw_text": "",
+            "_sources": list(entry["sources"]),
+            "_row_count": len(final_rows),
+        })
+
+    return {"tables": merged_tables, "warnings": all_warnings}
+
+
 def merge_results(ocr_data: dict, vision_data: dict) -> dict:
     """Merge OCR + Vision. Vision takes priority; OCR supplements all_text."""
     merged = dict(vision_data)
@@ -323,25 +533,18 @@ def process_page(page_num: int, pdf_path: str, client: OpenAI) -> dict:
 
     page = load_single_page(pdf_path, page_num)
 
-    # Downscale for OCR (Tesseract is slow on 5000+ px images)
     page_ocr = downscale_if_large(page, MAX_OCR_WIDTH)
 
-    # --- OCR: targeted regions ---
-    # Title block: bottom-right (most common on engineering drawings)
     tb_text, tb_conf = ocr_region(page_ocr, (0.60, 1.0), (0.78, 1.0))
     if not tb_text.strip():
-        # Fallback: bottom strip
         tb_text, tb_conf = ocr_region(page_ocr, (0.0, 1.0), (0.85, 1.0))
 
-    # Revision block: right side, upper portion
     rev_text, _ = ocr_region(page_ocr, (0.65, 1.0), (0.0, 0.18))
 
-    # Full page OCR
     full_processed = preprocess_for_ocr(page_ocr)
     full_text, full_conf = ocr_image(full_processed)
     del full_processed
 
-    # Callouts
     callout_texts = detect_callout_candidates(page_ocr)
     del page_ocr
     gc.collect()
@@ -354,7 +557,6 @@ def process_page(page_num: int, pdf_path: str, client: OpenAI) -> dict:
         "callouts": callout_texts,
     }
 
-    # --- Vision: 2×2 tiles (parallel) ---
     merged_vision = {
         "title_block": None,
         "revision_history": [],
@@ -373,11 +575,70 @@ def process_page(page_num: int, pdf_path: str, client: OpenAI) -> dict:
     else:
         print(f"  Running vision (full-page)...", file=sys.stderr)
         page_vision = downscale_if_large(page, VISION_MAX_PX)
-        del page
-        gc.collect()
 
         merged_vision = vision_extract(client, page_vision)
         del page_vision
+        gc.collect()
+
+        full_page_rows = count_table_rows(merged_vision)
+        has_table_keywords = bool(re.search(
+            r'(?i)(pipe\s*schedule|manhole|inlet|quantity|material\s*schedule|compaction)',
+            full_text
+        ))
+        should_multicrop = (full_page_rows >= TABLE_ROW_THRESHOLD or
+                           (has_table_keywords and len(merged_vision.get("tables", [])) > 0))
+
+        if should_multicrop:
+            print(f"  Dense table page detected ({full_page_rows} rows). Running multi-crop verification...", file=sys.stderr)
+
+            page_hires = load_single_page(pdf_path, page_num)
+
+            crop_results = []
+            for region_name, crop_box in MULTI_CROP_REGIONS:
+                try:
+                    print(f"    Extracting crop: {region_name}...", file=sys.stderr)
+                    crop_data = extract_table_from_crop(client, page_hires, region_name, crop_box)
+                    crop_rows = count_table_rows(crop_data)
+                    print(f"    {region_name}: {crop_rows} rows from {len(crop_data.get('tables', []))} tables", file=sys.stderr)
+                    if crop_rows > 0:
+                        crop_results.append((region_name, crop_data))
+                except Exception as e:
+                    print(f"    {region_name} failed: {e}", file=sys.stderr)
+
+            del page_hires
+            gc.collect()
+
+            if crop_results:
+                merged = merge_table_extractions(merged_vision, crop_results)
+                total_merged_rows = sum(len(t.get("rows", [])) for t in merged["tables"])
+                print(f"  Merged tables: {total_merged_rows} rows (was {full_page_rows} from full-page)", file=sys.stderr)
+
+                if merged.get("warnings"):
+                    print(f"  ⚠ CROSS-VALIDATION WARNINGS:", file=sys.stderr)
+                    for w in merged["warnings"]:
+                        print(f"    {w}", file=sys.stderr)
+
+                pipe_warnings = validate_pipe_diameters(merged["tables"])
+                if pipe_warnings:
+                    print(f"  ⚠ NON-STANDARD PIPE SIZES: {', '.join(pipe_warnings)}", file=sys.stderr)
+
+                gap_warnings = check_sequential_gaps(merged["tables"])
+                if gap_warnings:
+                    print(f"  ⚠ SEQUENCE GAPS: {'; '.join(gap_warnings)}", file=sys.stderr)
+
+                non_table_data = {k: v for k, v in merged_vision.items() if k != "tables"}
+                merged_vision = {**non_table_data, "tables": merged["tables"]}
+
+                all_data_warnings = (merged.get("warnings", []) + pipe_warnings + gap_warnings)
+                if all_data_warnings:
+                    merged_vision["_data_warnings"] = all_data_warnings
+        else:
+            pipe_warnings = validate_pipe_diameters(merged_vision.get("tables", []))
+            if pipe_warnings:
+                print(f"  ⚠ NON-STANDARD PIPE SIZES: {', '.join(pipe_warnings)}", file=sys.stderr)
+                merged_vision["_data_warnings"] = pipe_warnings
+
+        del page
         gc.collect()
 
     if merged_vision["title_block"] is None:
@@ -385,9 +646,9 @@ def process_page(page_num: int, pdf_path: str, client: OpenAI) -> dict:
 
     final = merge_results(ocr_data, merged_vision)
 
-    return {
+    result = {
         "page_number": page_num,
-        "extraction_method": "ocr+vision",
+        "extraction_method": "ocr+vision+multicrop" if has_table_content(merged_vision) else "ocr+vision",
         "title_block": final.get("title_block"),
         "revision_history": final.get("revision_history") or [],
         "general_notes": final.get("general_notes") or [],
@@ -397,6 +658,11 @@ def process_page(page_num: int, pdf_path: str, client: OpenAI) -> dict:
         "all_text": final.get("all_text") or "",
         "ocr_confidence": ocr_data.get("ocr_confidence", 0.0),
     }
+
+    if merged_vision.get("_data_warnings"):
+        result["_data_warnings"] = merged_vision["_data_warnings"]
+
+    return result
 
 
 def main():
