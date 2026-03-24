@@ -17,6 +17,111 @@ const MAX_CHUNK_CHARS = 1500;
 const CHUNK_OVERLAP = 150;
 const DB_BATCH_SIZE = 30;
 
+const STANDARD_PIPE_SIZES = new Set([4, 6, 8, 10, 12, 15, 18, 21, 24, 27, 30, 36, 42, 48, 54, 60, 72]);
+
+export interface DataQualityWarning {
+  type: "missing_sequential_id" | "non_standard_pipe_size" | "truncated_table";
+  page: number;
+  table: string;
+  detail: string;
+}
+
+export function validateConstructionData(pages: ConstructionPageResult[]): DataQualityWarning[] {
+  const warnings: DataQualityWarning[] = [];
+
+  const allIds: Map<string, { num: number; page: number; table: string }[]> = new Map();
+
+  for (const page of pages) {
+    const tables = page.tables || [];
+    for (const table of tables) {
+      const title = table.title || "";
+      const rows = table.rows || [];
+      const headers = table.headers || [];
+
+      const isPipeTable = /pipe/i.test(title) || /drainage.*pipe/i.test(title);
+      const diamIdx = isPipeTable
+        ? headers.findIndex(
+            (h) => /diam/i.test(h) || /size/i.test(h) || h.toLowerCase() === "in"
+          )
+        : -1;
+
+      for (const row of rows) {
+        const id = row[0] || "";
+        const match = id.match(/^([A-Za-z]+\d*)-(\d+)$/);
+        if (match) {
+          const prefix = match[1].toUpperCase();
+          const num = parseInt(match[2], 10);
+          if (!allIds.has(prefix)) allIds.set(prefix, []);
+          allIds.get(prefix)!.push({ num, page: page.page_number, table: title });
+        }
+
+        if (diamIdx >= 0 && diamIdx < row.length) {
+          const val = String(row[diamIdx]).replace(/['"]/g, "").trim();
+          const diam = parseInt(val, 10);
+          if (!isNaN(diam) && diam > 0 && diam <= 120 && !STANDARD_PIPE_SIZES.has(diam)) {
+            warnings.push({
+              type: "non_standard_pipe_size",
+              page: page.page_number,
+              table: title,
+              detail: `${id} has non-standard diameter ${diam}" (nearest standard: ${[...STANDARD_PIPE_SIZES].filter(s => Math.abs(s - diam) <= 6).join(", ") || "none"})`,
+            });
+          }
+        }
+      }
+
+      if (rows.length >= 10 && isPipeTable) {
+        const lastRow = rows[rows.length - 1];
+        const lastId = lastRow[0] || "";
+        const lastMatch = lastId.match(/^([A-Za-z]+\d*)-(\d+)$/);
+        if (lastMatch) {
+          const lastPrefix = lastMatch[1].toUpperCase();
+          const lastNum = parseInt(lastMatch[2], 10);
+          const prefixEntries = allIds.get(lastPrefix) || [];
+          const maxNum = Math.max(...prefixEntries.map(e => e.num), lastNum);
+          if (maxNum === lastNum && lastNum > 1) {
+            const seqNums = prefixEntries.map(e => e.num).sort((a, b) => a - b);
+            const consecutive = seqNums.length >= 3 &&
+              seqNums[seqNums.length - 1] - seqNums[seqNums.length - 2] === 1 &&
+              seqNums[seqNums.length - 2] - seqNums[seqNums.length - 3] === 1;
+            if (consecutive) {
+              warnings.push({
+                type: "truncated_table",
+                page: page.page_number,
+                table: title,
+                detail: `Table ends at ${lastId} with ${rows.length} rows — verify no data was cut off after the last entry`,
+              });
+            }
+          }
+        }
+      }
+    }
+  }
+
+  for (const [prefix, entries] of allIds) {
+    if (entries.length < 3) continue;
+    const nums = entries.map((e) => e.num).sort((a, b) => a - b);
+    for (let i = 1; i < nums.length; i++) {
+      const gap = nums[i] - nums[i - 1];
+      if (gap > 1) {
+        const missing = [];
+        for (let n = nums[i - 1] + 1; n < nums[i]; n++) {
+          missing.push(`${prefix}-${String(n).padStart(2, "0")}`);
+        }
+        if (missing.length <= 5) {
+          warnings.push({
+            type: "missing_sequential_id",
+            page: entries[0].page,
+            table: entries[0].table,
+            detail: `Gap in ${prefix} sequence: missing ${missing.join(", ")} (have ${prefix}-${String(nums[i - 1]).padStart(2, "0")} then ${prefix}-${String(nums[i]).padStart(2, "0")})`,
+          });
+        }
+      }
+    }
+  }
+
+  return warnings;
+}
+
 function makeChunks(text: string, label: string): Array<{ content: string; sectionLabel: string }> {
   const t = text.trim();
   if (!t) return [];
@@ -450,9 +555,21 @@ async function ftsSearch(projectId: number, question: string, topK: number): Pro
 }
 
 function extractIdentifiers(question: string): string[] {
-  const matches = question.match(/\b[A-Za-z]{1,4}[-]?\d+[A-Za-z]?\b/g) || [];
+  const matches = question.match(/\b[A-Za-z]{1,4}\d*[-]?\d+[A-Za-z]?\b/g) || [];
   const cleaned = [...new Set(matches.map((m) => m.toUpperCase()))];
-  return cleaned.filter((id) => id.length >= 2);
+  const ids = cleaned.filter((id) => id.length >= 2);
+
+  const phaseMatch = question.match(/phase\s*(\d+)/gi);
+  if (phaseMatch) {
+    for (const pm of phaseMatch) {
+      const num = pm.replace(/\D/g, "");
+      if (num) {
+        ids.push(`P${num}-`);
+      }
+    }
+  }
+
+  return ids;
 }
 
 async function identifierBoostSearch(

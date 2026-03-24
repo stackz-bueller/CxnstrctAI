@@ -13,7 +13,8 @@ import {
 import { eq, and, desc } from "drizzle-orm";
 import { z } from "zod";
 import { openai } from "@workspace/integrations-openai-ai-server";
-import { indexProjectDocument, keywordSearch } from "./indexer";
+import { indexProjectDocument, keywordSearch, validateConstructionData } from "./indexer";
+import type { ConstructionPageResult } from "@workspace/db";
 
 const router: IRouter = Router();
 
@@ -233,6 +234,55 @@ router.delete("/:id/documents/:docId", async (req, res) => {
   } catch (err) {
     req.log.error({ err }, "Failed to remove project document");
     res.status(500).json({ error: "Failed to remove project document" });
+  }
+});
+
+router.get("/:id/documents/:docId/validate", async (req, res) => {
+  const projectId = parseInt(req.params.id);
+  const docId = parseInt(req.params.docId);
+  if (isNaN(projectId) || isNaN(docId)) { res.status(400).json({ error: "Invalid id" }); return; }
+  try {
+    const [doc] = await db
+      .select()
+      .from(projectDocumentsTable)
+      .where(
+        and(
+          eq(projectDocumentsTable.id, docId),
+          eq(projectDocumentsTable.projectId, projectId),
+        )
+      );
+    if (!doc) { res.status(404).json({ error: "Document not found" }); return; }
+
+    if (doc.documentType !== "construction") {
+      res.json({ warnings: [], message: "Validation only applies to construction documents" });
+      return;
+    }
+
+    const [extraction] = await db
+      .select({ pages: constructionExtractionsTable.pages })
+      .from(constructionExtractionsTable)
+      .where(eq(constructionExtractionsTable.id, doc.documentId));
+
+    if (!extraction?.pages) {
+      res.json({ warnings: [], message: "No extraction data found" });
+      return;
+    }
+
+    const warnings = validateConstructionData(extraction.pages as ConstructionPageResult[]);
+    res.json({
+      warnings,
+      summary: {
+        total: warnings.length,
+        byType: {
+          missing_sequential_id: warnings.filter(w => w.type === "missing_sequential_id").length,
+          non_standard_pipe_size: warnings.filter(w => w.type === "non_standard_pipe_size").length,
+          truncated_table: warnings.filter(w => w.type === "truncated_table").length,
+        },
+      },
+    });
+  } catch (err) {
+    req.log.error({ err }, "Validation failed");
+    res.status(500).json({ error: "Validation failed" });
   }
 });
 

@@ -106,7 +106,7 @@ A project-scoped AI assistant that answers questions only from indexed project d
 5. When a question is asked, it's embedded, **triple-source hybrid search** runs in parallel:
    - **Vector search** (cosine similarity, weight 1.5x) — best for semantic matching
    - **Full-text search** (PostgreSQL tsvector, weight 1.0x) — best for keyword matching
-   - **Identifier boost search** (weight 2.0x) — detects construction identifiers in the question (e.g., DB3, P2-03, C-508, ASTM D4632) and boosts chunks containing exact matches
+   - **Identifier boost search** (weight 2.0x) — detects construction identifiers in the question (e.g., DB3, P2-03, C-508, ASTM D4632) and boosts chunks containing exact matches. Phase-aware: "Phase 3 pipes" expands to search for P3- prefix
    
    Results merged via Reciprocal Rank Fusion (RRF, k=60). Top-15 chunks passed to GPT-4o as context.
 6. Chat history is stored per project; each project is fully isolated
@@ -160,6 +160,7 @@ A project-scoped AI assistant that answers questions only from indexed project d
 - `GET /api/projects/:id/documents` — list project documents
 - `POST /api/projects/:id/documents` — add document `{ documentType, documentId }` → triggers background indexing
 - `DELETE /api/projects/:id/documents/:docId` — remove document + its chunks
+- `GET /api/projects/:id/documents/:docId/validate` — data quality check (detects missing sequential IDs, non-standard pipe diameters, truncated tables)
 - `POST /api/projects/:id/documents/:docId/reindex` — re-run indexing
 - `GET /api/projects/:id/chat` — get chat history
 - `DELETE /api/projects/:id/chat` — clear chat history
