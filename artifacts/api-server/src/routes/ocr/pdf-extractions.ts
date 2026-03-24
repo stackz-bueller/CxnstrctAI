@@ -55,17 +55,27 @@ router.get("/", async (req, res) => {
 
 router.get("/integrity", async (req, res) => {
   try {
-    const issues = await checkExtractionIntegrity();
+    const rows = await db.select().from(constructionExtractionsTable);
+    const issues: Array<{ extractionId: number; fileName: string; processedPages: number; totalPages: number; status: string }> = [];
+    for (const row of rows) {
+      if (row.status === "failed") continue;
+      const pages = (row.pages as Array<{ page_number: number }>) ?? [];
+      const actualProcessed = pages.length;
+      const isIncomplete = row.totalPages > 0 && actualProcessed < row.totalPages;
+      if (isIncomplete || row.status === "processing" || row.status === "incomplete" || row.status === "partial") {
+        issues.push({
+          extractionId: row.id,
+          fileName: row.fileName,
+          processedPages: actualProcessed,
+          totalPages: row.totalPages,
+          status: row.status,
+        });
+      }
+    }
     res.json({
       healthy: issues.length === 0,
       incompleteCount: issues.length,
-      issues: issues.map((i) => ({
-        extractionId: i.extractionId,
-        fileName: i.fileName,
-        processedPages: i.processedPages,
-        totalPages: i.totalPages,
-        action: i.action,
-      })),
+      issues,
     });
   } catch (err) {
     req.log.error({ err }, "Integrity check failed");
@@ -453,17 +463,27 @@ router.post("/:id/repair", async (req, res) => {
   const id = parseInt(req.params.id);
   if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
 
-  try {
-    const result = await repairIncompleteExtraction(id);
-    if (result.action === "repair_failed" && result.error?.includes("not found")) {
-      res.status(404).json(result);
-    } else {
-      res.json(result);
-    }
-  } catch (err) {
-    req.log.error({ err }, "Repair failed");
-    res.status(500).json({ error: "Repair failed" });
+  const [row] = await db
+    .select({ status: constructionExtractionsTable.status, fileName: constructionExtractionsTable.fileName })
+    .from(constructionExtractionsTable)
+    .where(eq(constructionExtractionsTable.id, id));
+
+  if (!row) { res.status(404).json({ error: "Extraction not found" }); return; }
+  if (row.status === "processing") {
+    res.json({ extractionId: id, status: "processing", message: "Repair already in progress" });
+    return;
   }
+
+  res.json({ extractionId: id, fileName: row.fileName, status: "repair_started", message: "Repair running in background" });
+
+  (async () => {
+    try {
+      const result = await repairIncompleteExtraction(id);
+      req.log.info({ result: result.action, pages: result.processedPages, total: result.totalPages }, "Background repair finished");
+    } catch (err) {
+      req.log.error({ err }, "Background repair failed");
+    }
+  })();
 });
 
 export default router;

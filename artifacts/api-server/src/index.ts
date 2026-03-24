@@ -46,6 +46,26 @@ async function runIntegrityCheck() {
         file: i.fileName,
         pages: `${i.processedPages}/${i.totalPages}`,
       })) }, "Found incomplete extractions on startup — marked as incomplete");
+
+      const linkedDocs = await db
+        .select({ extractionId: projectDocumentsTable.documentId })
+        .from(projectDocumentsTable)
+        .where(eq(projectDocumentsTable.documentType, "construction"));
+      const linkedIds = new Set(linkedDocs.map((d) => d.extractionId));
+
+      for (const issue of issues) {
+        if (linkedIds.has(issue.extractionId) && issue.processedPages < issue.totalPages) {
+          logger.info({ extractionId: issue.extractionId, file: issue.fileName, pages: `${issue.processedPages}/${issue.totalPages}` }, "Auto-resuming incomplete linked extraction");
+          (async () => {
+            try {
+              const result = await repairIncompleteExtraction(issue.extractionId);
+              logger.info({ extractionId: issue.extractionId, result: result.action, pages: result.processedPages, total: result.totalPages }, "Auto-resume repair finished");
+            } catch (err) {
+              logger.error({ err, extractionId: issue.extractionId }, "Auto-resume repair failed");
+            }
+          })();
+        }
+      }
     } else {
       logger.info("Extraction integrity check passed — all extractions complete");
     }

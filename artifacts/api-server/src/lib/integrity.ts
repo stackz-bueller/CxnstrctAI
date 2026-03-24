@@ -28,15 +28,19 @@ export async function checkExtractionIntegrity(): Promise<IntegrityResult[]> {
 
   for (const row of rows) {
     if (row.status === "failed") continue;
-    if (row.status === "processing") continue;
 
     const pages = (row.pages as Array<{ page_number: number }>) ?? [];
     const actualProcessed = pages.length;
     const isIncomplete = row.totalPages > 0 && actualProcessed < row.totalPages;
     const hasZeroPages = row.totalPages > 0 && actualProcessed === 0;
     const mislabeled = row.status === "completed" && isIncomplete;
+    const updatedAge = row.updatedAt ? Date.now() - new Date(row.updatedAt).getTime() : Infinity;
+    const STALE_THRESHOLD_MS = 5 * 60 * 1000;
+    const staleProcessing = row.status === "processing" && updatedAge > STALE_THRESHOLD_MS;
+    const partialRepair = row.status === "partial" && isIncomplete;
+    const alreadyIncomplete = row.status === "incomplete" && isIncomplete;
 
-    if (mislabeled || hasZeroPages) {
+    if (mislabeled || hasZeroPages || staleProcessing || partialRepair || alreadyIncomplete) {
       await db
         .update(constructionExtractionsTable)
         .set({
