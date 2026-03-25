@@ -1,8 +1,9 @@
 import { ReactNode } from "react";
 import { Link, useLocation } from "wouter";
-import { HardHat, Plus, MessageSquare } from "lucide-react";
+import { HardHat, Plus, MessageSquare, DollarSign, LogOut } from "lucide-react";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
+import { useAuth } from "@workspace/replit-auth-web";
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -11,6 +12,7 @@ function cn(...inputs: ClassValue[]) {
 export function Layout({ children }: { children: ReactNode }) {
   const [location] = useLocation();
   const isProjectDetail = location.startsWith("/projects/");
+  const { user, logout } = useAuth();
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
@@ -60,12 +62,41 @@ export function Layout({ children }: { children: ReactNode }) {
             <p className="text-[11px] font-medium text-muted-foreground/60 uppercase tracking-wider px-3 py-2">Projects</p>
           </div>
 
-          <div className="p-3 mt-auto border-t border-sidebar-border">
-            <div className="flex items-center gap-2.5 px-2 py-1.5">
-              <div className="size-7 rounded-full bg-primary/10 flex items-center justify-center border border-primary/20">
-                <MessageSquare className="size-3.5 text-primary" />
+          <div className="px-3 pb-1">
+            <Link href="/costs">
+              <div className={cn(
+                "flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-all cursor-pointer",
+                location === "/costs"
+                  ? "bg-primary/10 text-primary font-medium"
+                  : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+              )}>
+                <DollarSign className="size-4" />
+                Cost Monitor
               </div>
-              <span className="text-xs text-muted-foreground">ConstructAI v1.0</span>
+            </Link>
+          </div>
+
+          <div className="p-3 mt-auto border-t border-sidebar-border">
+            <div className="flex items-center justify-between px-2 py-1.5">
+              <div className="flex items-center gap-2.5 min-w-0">
+                {user?.profileImageUrl ? (
+                  <img src={user.profileImageUrl} alt="" className="size-7 rounded-full border border-border" />
+                ) : (
+                  <div className="size-7 rounded-full bg-primary/10 flex items-center justify-center border border-primary/20">
+                    <MessageSquare className="size-3.5 text-primary" />
+                  </div>
+                )}
+                <span className="text-xs text-muted-foreground truncate">
+                  {user?.firstName || user?.email || "User"}
+                </span>
+              </div>
+              <button
+                onClick={logout}
+                className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
+                title="Log out"
+              >
+                <LogOut className="size-3.5" />
+              </button>
             </div>
           </div>
         </aside>

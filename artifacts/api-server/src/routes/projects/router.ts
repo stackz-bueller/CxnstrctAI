@@ -19,6 +19,8 @@ import { openai } from "@workspace/integrations-openai-ai-server";
 import { indexProjectDocument, keywordSearch, validateConstructionData } from "./indexer";
 import type { ConstructionPageResult } from "@workspace/db";
 import { repairIncompleteExtraction } from "../../lib/integrity.js";
+import { trackCost, extractTokenUsage } from "../../lib/cost-tracker";
+import { requireAuth } from "../../lib/require-auth";
 
 const router: IRouter = Router();
 
@@ -37,7 +39,7 @@ router.get("/", async (req, res) => {
   }
 });
 
-router.post("/", async (req, res) => {
+router.post("/", requireAuth, async (req, res) => {
   const bodySchema = z.object({
     name: z.string().min(1),
     description: z.string().optional(),
@@ -60,7 +62,7 @@ router.post("/", async (req, res) => {
 });
 
 router.get("/:id", async (req, res) => {
-  const id = parseInt(req.params.id);
+  const id = parseInt(req.params.id as string);
   if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
   try {
     const [project] = await db.select().from(projectsTable).where(eq(projectsTable.id, id));
@@ -105,8 +107,8 @@ router.get("/:id", async (req, res) => {
   }
 });
 
-router.patch("/:id", async (req, res) => {
-  const id = parseInt(req.params.id);
+router.patch("/:id", requireAuth, async (req, res) => {
+  const id = parseInt(req.params.id as string);
   if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
   const bodySchema = z.object({
     name: z.string().min(1).optional(),
@@ -131,8 +133,8 @@ router.patch("/:id", async (req, res) => {
   }
 });
 
-router.delete("/:id", async (req, res) => {
-  const id = parseInt(req.params.id);
+router.delete("/:id", requireAuth, async (req, res) => {
+  const id = parseInt(req.params.id as string);
   if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
   try {
     await db.delete(documentChunksTable).where(eq(documentChunksTable.projectId, id));
@@ -150,7 +152,7 @@ router.delete("/:id", async (req, res) => {
 // ─── Project Documents ────────────────────────────────────────────────────────
 
 router.get("/:id/documents", async (req, res) => {
-  const id = parseInt(req.params.id);
+  const id = parseInt(req.params.id as string);
   if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
   try {
     const docs = await db
@@ -165,8 +167,8 @@ router.get("/:id/documents", async (req, res) => {
   }
 });
 
-router.post("/:id/documents", async (req, res) => {
-  const projectId = parseInt(req.params.id);
+router.post("/:id/documents", requireAuth, async (req, res) => {
+  const projectId = parseInt(req.params.id as string);
   if (isNaN(projectId)) { res.status(400).json({ error: "Invalid id" }); return; }
 
   const bodySchema = z.object({
@@ -265,9 +267,9 @@ router.post("/:id/documents", async (req, res) => {
   }
 });
 
-router.delete("/:id/documents/:docId", async (req, res) => {
-  const projectId = parseInt(req.params.id);
-  const docId = parseInt(req.params.docId);
+router.delete("/:id/documents/:docId", requireAuth, async (req, res) => {
+  const projectId = parseInt(req.params.id as string);
+  const docId = parseInt(req.params.docId as string);
   if (isNaN(projectId) || isNaN(docId)) { res.status(400).json({ error: "Invalid id" }); return; }
   try {
     await db
@@ -296,8 +298,8 @@ router.delete("/:id/documents/:docId", async (req, res) => {
 });
 
 router.get("/:id/documents/:docId/validate", async (req, res) => {
-  const projectId = parseInt(req.params.id);
-  const docId = parseInt(req.params.docId);
+  const projectId = parseInt(req.params.id as string);
+  const docId = parseInt(req.params.docId as string);
   if (isNaN(projectId) || isNaN(docId)) { res.status(400).json({ error: "Invalid id" }); return; }
   try {
     const [doc] = await db
@@ -344,9 +346,9 @@ router.get("/:id/documents/:docId/validate", async (req, res) => {
   }
 });
 
-router.post("/:id/documents/:docId/reindex", async (req, res) => {
-  const projectId = parseInt(req.params.id);
-  const docId = parseInt(req.params.docId);
+router.post("/:id/documents/:docId/reindex", requireAuth, async (req, res) => {
+  const projectId = parseInt(req.params.id as string);
+  const docId = parseInt(req.params.docId as string);
   if (isNaN(projectId) || isNaN(docId)) { res.status(400).json({ error: "Invalid id" }); return; }
   try {
     const [doc] = await db
@@ -378,7 +380,7 @@ router.post("/:id/documents/:docId/reindex", async (req, res) => {
 // ─── Chat History ─────────────────────────────────────────────────────────────
 
 router.get("/:id/chat", async (req, res) => {
-  const id = parseInt(req.params.id);
+  const id = parseInt(req.params.id as string);
   if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
   try {
     const messages = await db
@@ -393,8 +395,8 @@ router.get("/:id/chat", async (req, res) => {
   }
 });
 
-router.delete("/:id/chat", async (req, res) => {
-  const id = parseInt(req.params.id);
+router.delete("/:id/chat", requireAuth, async (req, res) => {
+  const id = parseInt(req.params.id as string);
   if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
   try {
     await db.delete(projectChatsTable).where(eq(projectChatsTable.projectId, id));
@@ -407,8 +409,8 @@ router.delete("/:id/chat", async (req, res) => {
 
 // ─── Chat / RAG ──────────────────────────────────────────────────────────────
 
-router.post("/:id/chat", async (req, res) => {
-  const projectId = parseInt(req.params.id);
+router.post("/:id/chat", requireAuth, async (req, res) => {
+  const projectId = parseInt(req.params.id as string);
   if (isNaN(projectId)) { res.status(400).json({ error: "Invalid id" }); return; }
 
   const bodySchema = z.object({ question: z.string().min(1).max(2000) });
@@ -634,6 +636,15 @@ FORMAT: Use clear structure. For tables, use markdown tables. For lists, use bul
         temperature: 0.05,
         max_tokens: 3000,
       });
+      const chatUsage = extractTokenUsage(completion);
+      void trackCost({
+        category: "chat",
+        operation: "project_chat",
+        model: chatUsage.model,
+        inputTokens: chatUsage.inputTokens,
+        outputTokens: chatUsage.outputTokens,
+        projectId,
+      });
       return parseConfidence(completion.choices[0]?.message?.content ?? "No response generated.");
     }
 
@@ -813,10 +824,10 @@ Return ONLY a JSON array of search strings. Example: ["masonry repointing quanti
   }
 });
 
-router.post("/:id/chat/:chatId/feedback", async (req, res) => {
+router.post("/:id/chat/:chatId/feedback", requireAuth, async (req, res) => {
   try {
-    const projectId = parseInt(req.params.id, 10);
-    const chatId = parseInt(req.params.chatId, 10);
+    const projectId = parseInt(req.params.id as string, 10);
+    const chatId = parseInt(req.params.chatId as string, 10);
     const { feedback, note } = req.body as { feedback: "positive" | "negative"; note?: string };
 
     if (!["positive", "negative"].includes(feedback)) {
@@ -957,10 +968,10 @@ router.get("/:id/documents/:docId/chunks", async (req, res) => {
   }
 });
 
-router.patch("/:id/chunks/:chunkId", async (req, res) => {
+router.patch("/:id/chunks/:chunkId", requireAuth, async (req, res) => {
   try {
-    const projectId = parseInt(req.params.id, 10);
-    const chunkId = parseInt(req.params.chunkId, 10);
+    const projectId = parseInt(req.params.id as string, 10);
+    const chunkId = parseInt(req.params.chunkId as string, 10);
 
     const bodySchema = z.object({
       correctedContent: z.string().min(1),
@@ -1026,9 +1037,9 @@ router.get("/:id/verified-facts", async (req, res) => {
   }
 });
 
-router.patch("/:id/unanswered/:questionId", async (req, res) => {
+router.patch("/:id/unanswered/:questionId", requireAuth, async (req, res) => {
   try {
-    const questionId = parseInt(req.params.questionId, 10);
+    const questionId = parseInt(req.params.questionId as string, 10);
     const { status, resolution } = req.body as { status: string; resolution?: string };
 
     if (!["open", "resolved", "acknowledged"].includes(status)) {

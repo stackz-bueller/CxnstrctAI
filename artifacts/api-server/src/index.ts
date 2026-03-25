@@ -6,17 +6,18 @@ import { eq, and, isNull } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 import { embed } from "./lib/embedder.js";
 import { repairIncompleteExtraction } from "./lib/integrity.js";
+import fs from "fs";
+import os from "os";
+import path from "path";
 
-const rawPort = process.env["PORT"];
-
-if (!rawPort) {
-  throw new Error(
-    "PORT environment variable is required but was not provided.",
-  );
+const requiredEnvVars = ["PORT", "DATABASE_URL", "REPL_ID"];
+const missingVars = requiredEnvVars.filter((v) => !process.env[v]);
+if (missingVars.length > 0) {
+  throw new Error(`Missing required environment variables: ${missingVars.join(", ")}`);
 }
 
+const rawPort = process.env["PORT"]!;
 const port = Number(rawPort);
-
 if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);
 }
@@ -110,7 +111,49 @@ async function backfillEmbeddings() {
   }
 }
 
-app.listen(port, async (err) => {
+function cleanupOrphanedTempFiles() {
+  try {
+    const tmpDir = os.tmpdir();
+    const files = fs.readdirSync(tmpDir);
+    let cleaned = 0;
+    for (const f of files) {
+      if (f.startsWith("construct-") || f.startsWith("upload-") || f.startsWith("pdf-extract-")) {
+        try {
+          fs.unlinkSync(path.join(tmpDir, f));
+          cleaned++;
+        } catch { /* ignore */ }
+      }
+    }
+    if (cleaned > 0) {
+      logger.info({ cleaned }, "Cleaned up orphaned temp files on startup");
+    }
+  } catch { /* ignore */ }
+}
+
+let server: ReturnType<typeof app.listen>;
+
+function gracefulShutdown(signal: string) {
+  logger.info({ signal }, "Received shutdown signal, closing gracefully...");
+  if (server) {
+    server.close(() => {
+      logger.info("Server closed, exiting");
+      process.exit(0);
+    });
+    setTimeout(() => {
+      logger.warn("Graceful shutdown timed out, forcing exit");
+      process.exit(1);
+    }, 10000);
+  } else {
+    process.exit(0);
+  }
+}
+
+process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
+process.on("SIGINT", () => gracefulShutdown("SIGINT"));
+
+cleanupOrphanedTempFiles();
+
+server = app.listen(port, async (err) => {
   if (err) {
     logger.error({ err }, "Error listening on port");
     process.exit(1);

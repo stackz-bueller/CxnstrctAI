@@ -75,6 +75,7 @@
     "zod": "catalog:"
   },
   "dependencies": {
+    "@workspace/replit-auth-web": "workspace:*",
     "react-dropzone": "^15.0.0",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1"

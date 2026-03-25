@@ -59,10 +59,32 @@ Provides project-scoped Q&A over indexed documents:
 - **Auto-validation**: `validateConstructionData()` stores warnings during indexing.
 - **Extraction Integrity System**: Verifies and auto-repairs incomplete construction extractions on server boot and document attachment.
 
+## Authentication & Security
+- **Replit OIDC Auth**: Server-side OpenID Connect login via `openid-client`. Sessions stored in `sessions` DB table. Users stored in `users` DB table.
+- **Auth Middleware**: `authMiddleware` populates `req.user` from session cookie. `requireAuth` middleware gates all API routes except health and auth endpoints.
+- **Router-level enforcement**: All OCR, project, cost, and document routes require authentication at the router mount level (`routes/index.ts`).
+
+## Cost Accounting
+- **`cost_events` table**: Tracks all AI API spend with model, token counts, estimated cost, category, and project association.
+- **`cost-tracker.ts`**: Model pricing table (gpt-5.2, gpt-4o, gpt-4o-mini), `trackCost()` and `extractTokenUsage()` utilities.
+- **Tracked operations**: OCR extraction (both passes), construction pipeline, chat queries.
+- **Endpoints**: `GET /api/costs` (paginated list), `GET /api/costs/summary` (by-category and daily breakdowns).
+
+## Production Hardening
+- **Graceful shutdown**: SIGTERM/SIGINT handlers with connection draining and 10s timeout.
+- **Env validation**: Startup checks for `PORT`, `DATABASE_URL`, `REPL_ID`.
+- **Rate limiting**: 120 req/min via `express-rate-limit`, health endpoint exempt.
+- **Deep health check**: `/api/healthz` tests DB connectivity.
+- **Temp file cleanup**: Orphaned files in OS temp dir cleaned on startup.
+- **Integrity checks**: Incomplete extractions detected and marked on startup.
+
 ## UI/UX
 Branded as **ConstructAI**, the frontend focuses on the AI assistant. Document processing features are backend-only. The UI includes:
+-   **Login gate**: Replit OIDC authentication with branded login screen.
 -   **Projects list**: Create and manage projects.
 -   **Project detail**: AI chat with feedback, citations, and document management.
+-   **Cost monitoring**: Charts showing spend by category and daily breakdown.
+-   **User profile**: Avatar, name display, and logout in sidebar.
 
 ## API Endpoints
 Comprehensive RESTful APIs for managing schemas, extractions, projects, and RAG chat.

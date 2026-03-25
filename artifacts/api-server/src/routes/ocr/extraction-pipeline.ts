@@ -1,5 +1,6 @@
 import { openai } from "@workspace/integrations-openai-ai-server";
 import type { SchemaField } from "@workspace/db/schema";
+import { trackCost, extractTokenUsage } from "../../lib/cost-tracker";
 
 export interface ExtractionFieldResult {
   name: string;
@@ -66,6 +67,16 @@ export async function runExtractionPipeline(
 
   const rawText = ocrResponse.choices[0]?.message?.content ?? "";
 
+  const ocrUsage = extractTokenUsage(ocrResponse);
+  void trackCost({
+    category: "ocr_extraction",
+    operation: "ocr_pass",
+    model: ocrUsage.model,
+    inputTokens: ocrUsage.inputTokens,
+    outputTokens: ocrUsage.outputTokens,
+    metadata: { schemaName },
+  });
+
   const fieldDefs = fields
     .map(
       (f, i) =>
@@ -102,6 +113,16 @@ Return ONLY a JSON array of ${fields.length} objects, one per field, in the exac
   });
 
   const extractionText = extractionResponse.choices[0]?.message?.content ?? "[]";
+
+  const extractUsage = extractTokenUsage(extractionResponse);
+  void trackCost({
+    category: "ocr_extraction",
+    operation: "schema_anchored_extraction",
+    model: extractUsage.model,
+    inputTokens: extractUsage.inputTokens,
+    outputTokens: extractUsage.outputTokens,
+    metadata: { schemaName, fieldCount: fields.length },
+  });
 
   let rawResults: Array<{ name: string; value: unknown; confidence: number; present: boolean }> = [];
   try {
