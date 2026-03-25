@@ -25,8 +25,19 @@ export function Layout({ children }: { children: ReactNode }) {
             ConstructAI
           </div>
         </Link>
-        <div className="flex items-center gap-3">
-          <span className="text-[10px] text-muted-foreground/50">v1.0</span>
+        <div className="flex items-center gap-2">
+          {user?.role === "superuser" && (
+            <Link href="/admin">
+              <div className={cn(
+                "p-1.5 rounded-md cursor-pointer transition-colors",
+                location === "/admin"
+                  ? "bg-primary/10 text-primary"
+                  : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+              )}>
+                <Shield className="size-4" />
+              </div>
+            </Link>
+          )}
           <Link href="/?new=1">
             <div className="flex items-center gap-1 px-2 py-1 rounded-md bg-primary text-primary-foreground text-xs font-medium cursor-pointer">
               <Plus className="size-3" />
