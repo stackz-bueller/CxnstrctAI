@@ -1,6 +1,7 @@
 import { Router, type IRouter } from "express";
 import path from "path";
 import fs from "fs";
+import mime from "mime-types";
 import { db } from "@workspace/db";
 import {
   projectsTable,
@@ -106,8 +107,15 @@ router.get("/:id", async (req, res) => {
     const constructionDocIds = documents
       .filter((d) => d.documentType === "construction")
       .map((d) => d.documentId);
+    const specDocIds = documents
+      .filter((d) => d.documentType === "spec")
+      .map((d) => d.documentId);
+    const financialDocIds = documents
+      .filter((d) => d.documentType === "financial")
+      .map((d) => d.documentId);
 
-    let extractionProgress: Record<number, { status: string; processedPages: number; totalPages: number }> = {};
+    let extractionProgress: Record<string, { status: string; processedPages: number; totalPages: number; fileName: string }> = {};
+
     if (constructionDocIds.length > 0) {
       const extractions = await db
         .select({
@@ -115,17 +123,49 @@ router.get("/:id", async (req, res) => {
           status: constructionExtractionsTable.status,
           processedPages: constructionExtractionsTable.processedPages,
           totalPages: constructionExtractionsTable.totalPages,
+          fileName: constructionExtractionsTable.fileName,
         })
         .from(constructionExtractionsTable)
         .where(sql`${constructionExtractionsTable.id} IN (${sql.join(constructionDocIds.map((id) => sql`${id}`), sql`, `)})`);
       for (const ext of extractions) {
-        extractionProgress[ext.id] = { status: ext.status, processedPages: ext.processedPages, totalPages: ext.totalPages };
+        extractionProgress[`construction:${ext.id}`] = { status: ext.status, processedPages: ext.processedPages, totalPages: ext.totalPages, fileName: ext.fileName };
+      }
+    }
+
+    if (specDocIds.length > 0) {
+      const extractions = await db
+        .select({
+          id: specExtractionsTable.id,
+          status: specExtractionsTable.status,
+          totalPages: specExtractionsTable.totalPages,
+          fileName: specExtractionsTable.fileName,
+        })
+        .from(specExtractionsTable)
+        .where(sql`${specExtractionsTable.id} IN (${sql.join(specDocIds.map((id) => sql`${id}`), sql`, `)})`);
+      for (const ext of extractions) {
+        extractionProgress[`spec:${ext.id}`] = { status: ext.status, processedPages: 0, totalPages: ext.totalPages, fileName: ext.fileName };
+      }
+    }
+
+    if (financialDocIds.length > 0) {
+      const extractions = await db
+        .select({
+          id: financialExtractionsTable.id,
+          status: financialExtractionsTable.status,
+          totalPages: financialExtractionsTable.totalPages,
+          fileName: financialExtractionsTable.fileName,
+        })
+        .from(financialExtractionsTable)
+        .where(sql`${financialExtractionsTable.id} IN (${sql.join(financialDocIds.map((id) => sql`${id}`), sql`, `)})`);
+      for (const ext of extractions) {
+        extractionProgress[`financial:${ext.id}`] = { status: ext.status, processedPages: 0, totalPages: ext.totalPages, fileName: ext.fileName };
       }
     }
 
     const enrichedDocs = documents.map((doc) => {
-      if (doc.documentType === "construction" && extractionProgress[doc.documentId]) {
-        return { ...doc, extractionProgress: extractionProgress[doc.documentId] };
+      const key = `${doc.documentType}:${doc.documentId}`;
+      if (extractionProgress[key]) {
+        return { ...doc, extractionProgress: extractionProgress[key] };
       }
       return doc;
     });
@@ -174,6 +214,52 @@ router.delete("/:id", requireAuth, async (req, res) => {
   } catch (err) {
     req.log.error({ err }, "Failed to delete project");
     res.status(500).json({ error: "Failed to delete project" });
+  }
+});
+
+router.get("/:id/documents/:docId/file", requireAuth, async (req, res) => {
+  const projectId = parseInt(req.params.id as string);
+  const docId = parseInt(req.params.docId as string);
+  if (isNaN(projectId) || isNaN(docId)) { res.status(400).json({ error: "Invalid id" }); return; }
+
+  try {
+    const [doc] = await db
+      .select()
+      .from(projectDocumentsTable)
+      .where(and(eq(projectDocumentsTable.projectId, projectId), eq(projectDocumentsTable.id, docId)));
+
+    if (!doc) { res.status(404).json({ error: "Document not found in this project" }); return; }
+
+    let fileName = "";
+    if (doc.documentType === "construction") {
+      const [row] = await db.select({ fileName: constructionExtractionsTable.fileName }).from(constructionExtractionsTable).where(eq(constructionExtractionsTable.id, doc.documentId));
+      if (row) fileName = row.fileName;
+    } else if (doc.documentType === "spec") {
+      const [row] = await db.select({ fileName: specExtractionsTable.fileName }).from(specExtractionsTable).where(eq(specExtractionsTable.id, doc.documentId));
+      if (row) fileName = row.fileName;
+    } else if (doc.documentType === "financial") {
+      const [row] = await db.select({ fileName: financialExtractionsTable.fileName }).from(financialExtractionsTable).where(eq(financialExtractionsTable.id, doc.documentId));
+      if (row) fileName = row.fileName;
+    } else if (doc.documentType === "ocr") {
+      const [row] = await db.select({ fileName: extractionsTable.fileName }).from(extractionsTable).where(eq(extractionsTable.id, doc.documentId));
+      if (row) fileName = row.fileName;
+    }
+
+    if (!fileName) { res.status(404).json({ error: "Source file not found" }); return; }
+
+    const assetsDir = path.resolve(process.cwd(), "../../attached_assets");
+    const filePath = path.join(assetsDir, path.basename(fileName));
+
+    if (!fs.existsSync(filePath)) { res.status(404).json({ error: "File not found on disk" }); return; }
+
+    const contentType = mime.lookup(fileName) || "application/octet-stream";
+    const disposition = req.query.download === "1" ? "attachment" : "inline";
+    res.setHeader("Content-Type", contentType);
+    res.setHeader("Content-Disposition", `${disposition}; filename="${path.basename(fileName)}"`);
+    fs.createReadStream(filePath).pipe(res);
+  } catch (err) {
+    req.log.error({ err }, "Failed to serve document file");
+    res.status(500).json({ error: "Failed to serve file" });
   }
 });
 

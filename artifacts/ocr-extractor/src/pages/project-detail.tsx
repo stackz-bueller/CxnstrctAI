@@ -38,6 +38,8 @@ import {
   ArrowRight,
   History,
   Upload,
+  Download,
+  Play,
 } from "lucide-react";
 
 const API_BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -54,6 +56,7 @@ type ExtractionProgress = {
   status: string;
   processedPages: number;
   totalPages: number;
+  fileName: string;
 };
 
 type ProjectDocument = {
@@ -297,9 +300,6 @@ export default function ProjectDetailPage() {
     if (!files || files.length === 0) return;
     setUploading(true);
 
-    type UploadedDoc = { id: number; pipeline: string; fileName: string; fileSize: number };
-    const uploaded: UploadedDoc[] = [];
-
     const sortedFiles = Array.from(files).sort((a, b) => a.size - b.size);
 
     for (let i = 0; i < sortedFiles.length; i++) {
@@ -353,35 +353,12 @@ export default function ProjectDetailPage() {
           continue;
         }
 
-        uploaded.push({ id: result.id, pipeline: result.pipeline, fileName: file.name, fileSize: file.size });
       } catch (e) {
         alert(`Error uploading ${file.name}: ${e instanceof Error ? e.message : "Unknown error"}`);
       }
     }
 
     await fetchProject();
-
-    if (uploaded.length > 0) {
-      setUploadProgress(`Starting processing for ${uploaded.length} file${uploaded.length > 1 ? "s" : ""}…`);
-
-      for (const doc of uploaded) {
-        try {
-          const procRes = await fetch(`${API_BASE}/api/smart-upload/${doc.id}/process`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ pipeline: doc.pipeline }),
-          });
-          if (!procRes.ok) {
-            const errData = await procRes.json().catch(() => ({}));
-            alert(`Failed to start processing ${doc.fileName}: ${(errData as { error?: string }).error || procRes.statusText}`);
-          }
-        } catch (e) {
-          alert(`Error starting processing ${doc.fileName}: ${e instanceof Error ? e.message : "Unknown error"}`);
-        }
-      }
-
-      setPollingActive(true);
-    }
 
     setUploading(false);
     setUploadProgress(null);
@@ -393,6 +370,51 @@ export default function ProjectDetailPage() {
       await fetch(`${API_BASE}/api/projects/${projectId}/documents/${docId}/reindex`, { method: "POST" });
       await fetchProject();
     } catch { /* ignore */ }
+  }
+
+  const [processingDocId, setProcessingDocId] = useState<number | null>(null);
+
+  async function processDocument(doc: ProjectDocument) {
+    if (!doc.extractionProgress) return;
+    const pipelineMap: Record<string, string> = {
+      construction: "pdf-extractions",
+      spec: "spec-extractions",
+      financial: "financial-extractions",
+    };
+    const pipeline = pipelineMap[doc.documentType];
+    if (!pipeline) return;
+
+    setProcessingDocId(doc.id);
+    try {
+      const res = await fetch(`${API_BASE}/api/smart-upload/${doc.documentId}/process`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pipeline }),
+      });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        alert(`Failed to start processing: ${(errData as { error?: string }).error || res.statusText}`);
+      } else {
+        setPollingActive(true);
+        await fetchProject();
+      }
+    } catch (e) {
+      alert(`Error starting processing: ${e instanceof Error ? e.message : "Unknown error"}`);
+    } finally {
+      setProcessingDocId(null);
+    }
+  }
+
+  async function processAllUploaded() {
+    if (!project) return;
+    const uploadedDocs = project.documents.filter(
+      (doc) => doc.extractionProgress?.status === "uploaded"
+    );
+    if (uploadedDocs.length === 0) return;
+
+    for (const doc of uploadedDocs) {
+      await processDocument(doc);
+    }
   }
 
   async function askQuestion(q?: string) {
@@ -783,13 +805,25 @@ export default function ProjectDetailPage() {
               </div>
             ) : (
               <div className="space-y-2">
+                {project.documents.some((d) => d.extractionProgress?.status === "uploaded") && (
+                  <button
+                    onClick={processAllUploaded}
+                    disabled={processingDocId !== null}
+                    className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 text-xs font-medium hover:bg-emerald-500/20 transition-colors disabled:opacity-50"
+                  >
+                    {processingDocId !== null ? <Loader2 className="size-3 animate-spin" /> : <Play className="size-3" />}
+                    Process All Uploaded
+                  </button>
+                )}
                 {project.documents.map((doc) => {
                   const meta = DOC_TYPE_META[doc.documentType as keyof typeof DOC_TYPE_META] ?? DOC_TYPE_META.ocr;
                   const status = INDEX_STATUS[doc.indexStatus] ?? INDEX_STATUS.pending;
                   const Icon = meta.icon;
                   const StatusIcon = status.icon;
                   const ep = doc.extractionProgress;
+                  const isUploaded = ep && ep.status === "uploaded";
                   const isExtracting = ep && (ep.status === "processing" || ep.status === "incomplete");
+                  const isFailed = ep && ep.status === "failed";
                   const extractionPct = ep && ep.totalPages > 0 ? Math.round((ep.processedPages / ep.totalPages) * 100) : 0;
                   return (
                     <div key={doc.id} className={`rounded-lg border ${meta.border} ${meta.bg} p-3`}>
@@ -798,7 +832,12 @@ export default function ProjectDetailPage() {
                         <div className="flex-1 min-w-0">
                           <p className="text-xs font-medium text-foreground truncate">{doc.documentName}</p>
                           <p className="text-xs text-muted-foreground">{meta.label}</p>
-                          {isExtracting ? (
+                          {isUploaded ? (
+                            <div className="flex items-center gap-1 mt-1 text-xs text-amber-500">
+                              <Upload className="size-3" />
+                              Uploaded — ready to process
+                            </div>
+                          ) : isExtracting ? (
                             <div className="mt-1.5 space-y-1">
                               <div className="flex items-center gap-1.5 text-xs text-blue-500">
                                 <Loader2 className="size-3 animate-spin" />
@@ -817,9 +856,9 @@ export default function ProjectDetailPage() {
                             </div>
                           ) : (
                             <>
-                              <div className={`flex items-center gap-1 mt-1 text-xs ${status.color}`}>
-                                <StatusIcon className={`size-3 ${"spin" in status && status.spin ? "animate-spin" : ""}`} />
-                                {status.label}
+                              <div className={`flex items-center gap-1 mt-1 text-xs ${isFailed ? "text-destructive" : status.color}`}>
+                                {isFailed ? <XCircle className="size-3" /> : <StatusIcon className={`size-3 ${"spin" in status && status.spin ? "animate-spin" : ""}`} />}
+                                {isFailed ? "Processing failed" : status.label}
                                 {doc.indexStatus === "indexed" && <span className="text-muted-foreground">· {doc.chunkCount} chunks</span>}
                                 {ep && ep.status === "completed" && ep.totalPages > 0 && (
                                   <span className="text-muted-foreground">· {ep.totalPages} pages</span>
@@ -832,6 +871,27 @@ export default function ProjectDetailPage() {
                           )}
                         </div>
                         <div className="flex items-center gap-1 shrink-0">
+                          {ep && ep.fileName && (
+                            <a
+                              href={`${API_BASE}/api/projects/${projectId}/documents/${doc.id}/file`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="size-6 rounded flex items-center justify-center text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors"
+                              title="View original file"
+                            >
+                              <Download className="size-3" />
+                            </a>
+                          )}
+                          {(isUploaded || isFailed) && (
+                            <button
+                              onClick={() => processDocument(doc)}
+                              disabled={processingDocId === doc.id}
+                              className="size-6 rounded flex items-center justify-center text-muted-foreground hover:text-emerald-600 hover:bg-emerald-500/10 transition-colors"
+                              title={isFailed ? "Retry processing" : "Start processing"}
+                            >
+                              {processingDocId === doc.id ? <Loader2 className="size-3 animate-spin" /> : <Play className="size-3" />}
+                            </button>
+                          )}
                           {doc.indexStatus === "indexed" && (
                             <button
                               onClick={() => openChunkBrowser(doc)}
