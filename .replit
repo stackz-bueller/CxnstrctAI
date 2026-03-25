@@ -32,3 +32,7 @@ packages = ["freetype", "lcms2", "libGL", "libimagequant", "libjpeg", "libtiff",
 [userenv]
 
 [userenv.development]
+
+[userenv.shared]
+ALLOWED_USER_IDS = "2637962"
+SUPERUSER_IDS = "2637962"
