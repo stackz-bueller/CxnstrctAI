@@ -287,8 +287,24 @@ async function indexConstruction(
       }
     }
 
+    const revHistory = page.revision_history || [];
+    if (revHistory.length > 0) {
+      const revText = revHistory
+        .map((r) =>
+          `Rev ${r.rev_number || "?"}: ${r.date || ""} — ${r.description || ""}`)
+        .join("\n");
+      pending.push(...makeChunks(`${label} – Revision History:\n${revText}`, label));
+    }
+
     if (page.general_notes.length > 0) {
       pending.push(...makeChunks(`${label} – General Notes:\n${page.general_notes.join("\n")}`, label));
+    }
+    const legends = (page as Record<string, unknown>).legends as Array<{ symbol?: string; description?: string }> | undefined;
+    if (legends && legends.length > 0) {
+      const legendText = legends
+        .map((l) => `${l.symbol || "?"}: ${l.description || ""}`)
+        .join("\n");
+      pending.push(...makeChunks(`${label} – Legend:\n${legendText}`, label));
     }
     const tables = page.tables;
     if (tables && tables.length > 0) {
@@ -571,7 +587,7 @@ async function ftsSearch(projectId: number, question: string, topK: number): Pro
     .toLowerCase()
     .replace(/[^a-z0-9\s]/g, " ")
     .split(/\s+/)
-    .filter((w) => w.length >= 3 && !STOP_WORDS.has(w))
+    .filter((w) => w.length >= 2 && !STOP_WORDS.has(w))
     .slice(0, 20);
 
   if (words.length === 0) return [];
@@ -808,7 +824,7 @@ export async function keywordSearch(
   if (vectorResults.length === 0 && ftsResults.length === 0 && idResults.length === 0) return [];
 
   const scoreMap = new Map<string, { row: SearchRow; rrf: number }>();
-  const key = (r: SearchRow) => r.content.slice(0, 120);
+  const key = (r: SearchRow) => r.content.slice(0, 300);
 
   const hasIds = identifiers.length > 0;
   const VECTOR_WEIGHT = hasIds ? 1.5 : 2.5;
@@ -853,7 +869,7 @@ export async function keywordSearch(
 
   const selected: Array<{ row: SearchRow; rrf: number }> = [];
   const sectionCounts = new Map<string, number>();
-  const MAX_PER_SECTION = 3;
+  const MAX_PER_SECTION = 5;
 
   for (const entry of ranked) {
     if (selected.length >= topK) break;

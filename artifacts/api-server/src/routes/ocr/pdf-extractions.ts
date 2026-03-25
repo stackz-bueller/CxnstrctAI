@@ -197,7 +197,7 @@ router.post("/upload", upload.single("file"), async (req, res) => {
 
         proc.stderr.on("data", (chunk: Buffer) => {
           const text = chunk.toString().trim();
-          if (text) req.log.warn({ stderr: text.slice(0, 300) }, "Python stderr");
+          if (text) req.log.warn({ stderr: text.slice(0, 1000) }, "Python stderr");
         });
 
         proc.on("close", (code, signal) => {

@@ -1,8 +1,6 @@
 # Overview
 
-This project is a pnpm workspace monorepo using TypeScript, focused on advanced document information extraction and AI-powered data management. Its core purpose is to provide a robust, schema-anchored document processing system capable of extracting structured data from various document types, including images, construction PDFs, and technical specifications. The project also features a powerful, project-scoped AI agent (RAG sidecar) that allows users to query indexed documents with high accuracy and anti-hallucination capabilities.
-
-The primary goal is to prevent schema drift and provide reliable, auditable data extraction for critical business processes, particularly in industries dealing with complex documentation like construction. Key capabilities include visual OCR, schema-constrained data extraction, and intelligent querying over diverse document formats, all integrated into a portable API and a user-friendly React frontend.
+This project is a pnpm workspace monorepo using TypeScript, designed for advanced document information extraction and AI-powered data management. It provides a robust, schema-anchored system to extract structured data from diverse document types, including images, construction PDFs, and technical specifications. A project-scoped AI agent (RAG sidecar) allows users to query indexed documents with high accuracy and anti-hallucination capabilities. The main goal is to prevent schema drift and deliver reliable, auditable data extraction for critical business processes, especially in industries handling complex documentation like construction.
 
 # User Preferences
 
@@ -11,111 +9,73 @@ I prefer iterative development and want to be asked before making major changes.
 # System Architecture
 
 ## Monorepo Structure
-
-The project is organized as a pnpm monorepo using TypeScript 5.9, with a clear separation between deployable applications (`artifacts/`) and shared libraries (`lib/`). Each package manages its own dependencies and utilizes `tsconfig.base.json` with `composite: true` for efficient cross-package type-checking.
+The project uses a pnpm monorepo with TypeScript 5.9, separating deployable applications (`artifacts/`) from shared libraries (`lib/`).
 
 ## Core Technologies
-
-- **Backend**: Node.js 24 with Express 5 for the API server.
-- **Database**: PostgreSQL with Drizzle ORM for schema definition and data persistence, including `pgvector` for vector embeddings.
-- **Frontend**: React with Vite for the OCR Extractor UI.
-- **Validation**: Zod (`zod/v4`) and `drizzle-zod` for API and database schema validation.
-- **API Definition**: OpenAPI 3.1 specification, with Orval for client and schema codegen.
-- **Build System**: esbuild for ESM bundling.
-- **AI Runtimes**: Python 3.11 for PDF processing pipelines (pdf2image, opencv-python-headless, pytesseract) and local embedding model execution (`onnxruntime-node`). System dependencies include Poppler and Tesseract 5.5.0.
+- **Backend**: Node.js 24 with Express 5.
+- **Database**: PostgreSQL with Drizzle ORM and `pgvector`.
+- **Frontend**: React with Vite.
+- **Validation**: Zod and `drizzle-zod`.
+- **API Definition**: OpenAPI 3.1 with Orval for codegen.
+- **Build System**: esbuild.
+- **AI Runtimes**: Python 3.11 for PDF processing and `onnxruntime-node` for local embeddings.
 
 ## Document Processing Pipelines
 
-### OCR Extractor (Main App)
-
-- **Two-pass AI pipeline**:
-    1.  **Pass 1 (OCR)**: Raw text extraction from document images using GPT-5.2 Vision.
-    2.  **Pass 2 (Schema-anchored extraction)**: Structured data extraction constrained by a predefined schema, preventing schema drift and hallucination.
-- **Capabilities**: Schema creation (typed fields), image upload (JPG, PNG, WebP), per-field confidence scores, full extraction history, raw OCR text access.
+### OCR Extractor
+A two-pass AI pipeline for raw text extraction (GPT-5.2 Vision) and schema-anchored structured data extraction. Features schema creation, image upload, confidence scores, and full extraction history.
 
 ### Construction PDF Pipeline
-
--   **Multi-stage processing for engineering documents** (production grade — no shortcuts, no skipping):
-    1.  **PDF to Images**: `pdf2image`/Poppler converts PDFs to **300 DPI** images (captures small annotations on large-format drawings).
-    2.  **Image Preprocessing**: OpenCV adaptive thresholding for Tesseract.
-    3.  **Targeted OCR**: Tesseract OCR applied to title block, revision block, full page, and callout detection.
-    4.  **Full-Page Vision**: GPT-4o Vision (`detail: "high"`, 8192 max tokens) for structured extraction. Runs on EVERY page — no skip thresholds.
-    5.  **3×3 Tiled Vision**: Every page is split into a **3×3 grid (9 tiles, 15% overlap)**, each sent to GPT-4o Vision (`detail: "high"`, 6144 max tokens per tile). This captures small dimensions, annotations, and details that full-page Vision misses. JPEG quality 92.
-    6.  **Table Verification**: Dense table pages (≥8 rows detected in any pass) additionally run 4-region overlapping crop extractions with cross-validation to prevent truncation and misreading.
-    7.  **Exhaustive Merge**: All 10+ Vision results (full-page + 9 tiles + optional table crops) plus OCR are merged with deduplication. Text, callouts, notes, legends, and tables are unioned from all passes. Table rows are cross-validated with conflict detection.
-    8.  **Quality Gate**: Non-voided pages with <30 chars of extracted text are flagged for manual review.
--   **Extracted fields**: Title block data, revision history, general notes, structured tables (compaction density, material schedules, pipe schedules), callouts, legends, full raw text.
--   **PE Stamp Extraction**: Professional Engineer stamp data (name, license, discipline) is extracted via targeted right-edge crops of drawing pages. Stamps with signatures over printed names require focused crops for reliable OCR. PE data is injected into `all_text` as structured `PROFESSIONAL ENGINEER STAMP` blocks and indexed as dedicated searchable chunks per discipline (civil, electrical, plumbing/mechanical).
--   **Voided Page Detection**: GPT-4o Vision detects pages with large X marks, "VOID", "DELETED", "REMOVED", "SUPERSEDED", or "NOT USED" markings. Voided pages get `voided: true` flag and reason. Cover sheet X marks on sheet listings are noted in general_notes. Voided page chunks are tagged `[VOIDED/REMOVED FROM PROJECT]` in the index with a warning chunk, and the LLM system prompt instructs the AI to exclude voided data from current scope answers.
--   **Script**: `scripts/pdf_processor.py` (Python child process). No page limit — processes entire drawing sets. Initial upload uses streaming mode (saves each page to DB as it's processed). 4-hour timeout to handle large sets.
+A multi-stage process for engineering documents:
+- Converts PDFs to 300 DPI images.
+- Uses OpenCV for image preprocessing.
+- Applies Tesseract OCR for targeted extraction.
+- Employs GPT-4o Vision (full-page and 3x3 tiled) for structured data.
+- Includes table verification, exhaustive merge of all extraction results, and a quality gate for review.
+- Extracts PE stamp data and detects voided pages, marking them appropriately.
+- Scripted via `scripts/pdf_processor.py`.
 
 ### Specification Extraction Pipeline
-
--   **Optimized for CSI-format PDFs**:
-    1.  **Direct Text Extraction**: `pdfplumber` for text-based PDFs (no OCR).
-    2.  **CSI Structure Parsing**: Regex identifies section headers (`SECTION XXXXXX – Title`) and boundaries.
-    3.  **Division Grouping**: Maps sections to CSI MasterFormat divisions.
-    4.  **Part/Subsection Parsing**: Extracts content from PART 1/2/3 and subsections.
-    5.  **AI Structuring**: GPT-4o (text only) processes initial sections for structured requirement extraction; subsequent sections use regex only.
-    6.  **Project Name Detection**: Heuristic regex on initial pages.
--   **Script**: `scripts/spec_processor.py` (Python child process).
+Optimized for CSI-format PDFs:
+- Uses `pdfplumber` for text extraction.
+- Parses CSI structure, sections, and divisions using regex and AI.
+- Extracts content from parts and subsections.
+- Scripted via `scripts/spec_processor.py`.
 
 ## Project AI Agents (RAG Sidecar)
-
--   **Project-scoped Q&A**: Answers questions based solely on indexed project documents.
--   **Indexing**: Documents are chunked (1500-char max, 150-char overlap), embedded locally using an `all-MiniLM-L6-v2` ONNX model, and stored in PostgreSQL (`vector(384)` with `pgvector` IVFFlat index). Table data gets dedicated chunks. Embeddings are batched (16 texts per ONNX inference pass) and SQL updates are batched (single CASE/IN UPDATE per batch) for performance. Non-finite embedding values (NaN/Inf) are filtered out before DB writes.
--   **Hybrid Search**: Questions are embedded, and a parallel **triple-source hybrid search** is performed:
-    -   Vector search (cosine similarity, 2.5x weight for general questions, 1.5x when identifiers detected)
-    -   Full-text search (PostgreSQL tsvector, 1.0x weight)
-    -   Identifier boost search (construction identifiers, 2.5x weight)
-    Results merged via Reciprocal Rank Fusion (RRF) with source diversity enforcement (max 3 chunks per section to prevent single-section domination).
--   **Construction synonym expansion**: Search automatically expands domain-specific terms (e.g., "invert" → also searches "bottom elevation", "rim" → "top elevation", "located" → "site address, municipality, title block", "LF" → "linear feet", "repoint" → "tuckpoint, mortar joint", plus quantity, masonry, bridge, and other construction terms).
--   **AI Reranking**: Top-25 retrieved chunks are scored 0-10 for relevance by GPT-4o before being passed to the answer model. This filters out noise and ensures the most relevant chunks from across different document sections reach the AI. Gracefully falls back to original ranking on failure.
--   **Contextual AI**: Top reranked chunks (up to 15) passed to GPT-4o for final answer generation.
--   **Safety and Anti-hallucination**: Temperature 0.05, 2000-token limit, system prompt enforces exact quoting, source citation, conflict flagging, terminology awareness, and data quality warnings. Explicitly states if no relevant chunks are found.
--   **SSE Streaming**: Chat responses stream via Server-Sent Events (`text/event-stream`). Backend sends `{type:"sources"}` first, then `{type:"token"}` chunks, then `{type:"done",message,confidence}` or `{type:"error"}`. Frontend consumes via `ReadableStream` reader with graceful fallback to non-streaming JSON. Triggered by `Accept: text/event-stream` header or `?stream=1` query param.
--   **Confidence Scoring**: AI self-rates confidence 0–10 per answer (stripped from response, stored in DB). Frontend displays green/amber/red confidence badges.
--   **User Feedback & Verified Facts**: Thumbs up/down buttons on each assistant response. Negative feedback auto-catalogs the question for review. Positive feedback on high-confidence (≥7) answers stores the Q&A pair as a **verified fact** (`verified_facts` table). Verified facts are injected into subsequent chat context so the AI can reference previously confirmed answers.
--   **Data Correction System**: Users can browse indexed chunks per document (paginated, searchable), edit OCR errors inline, and save corrections with audit trail (`data_corrections` table). Corrections automatically clear the chunk's embedding so it regenerates on next backfill cycle. Frontend "Data Browser" accessible via search icon on each indexed document in the Docs tab.
--   **Self-Healing Retry Cascade**: On search failure, attempts multiple strategies (hybrid_standard → simplified_query → proper_noun extraction) before returning "not found". If confidence ≤ 3, auto-retries by using GPT to reformulate the question into 3-5 alternative search queries with domain-specific terminology, re-searches, and re-asks the LLM with the expanded context. Unanswered questions automatically logged to DB with strategies attempted, chunks found, and reason.
--   **Unanswered Question Catalog**: `GET /:id/unanswered` and `PATCH /:id/unanswered/:questionId` endpoints for reviewing and resolving gaps.
--   **Auto-validation**: `validateConstructionData()` runs during indexing, storing warnings (e.g., non-standard pipe sizes, ID gaps) as searchable chunks.
--   **Extraction Integrity System** (`artifacts/api-server/src/lib/integrity.ts`):
-    -   **Startup check**: On every server boot, scans all construction extractions for `processedPages < totalPages` and marks mislabeled "completed" records as "incomplete".
-    -   **Auto-repair on attach**: When attaching a construction document to a project, if the extraction is incomplete, the system auto-repairs (re-extracts missing pages from the stored PDF) *before* indexing. Indexing only runs on fully extracted data.
-    -   **Persistent PDF storage**: All uploaded PDFs are persisted to `attached_assets/` with sanitized filenames matching the DB record, so re-extraction is always possible.
-    -   **API endpoints**: `GET /api/pdf-extractions/integrity` (health check), `POST /api/pdf-extractions/:id/repair` (trigger repair for a specific extraction).
-    -   **Filename consistency**: Both DB `fileName` and disk file use the same sanitized name (`[^a-zA-Z0-9._-]` → `_`), with fallback lookup for legacy records.
+Provides project-scoped Q&A over indexed documents:
+- **Indexing**: Documents are chunked, embedded using `all-MiniLM-L6-v2` ONNX model, and stored in PostgreSQL with `pgvector`.
+- **Hybrid Search**: Combines vector, full-text (min 2-char words for abbreviations like PE, LF, SF), and identifier boost searches with Reciprocal Rank Fusion (300-char dedup keys, max 5 chunks per section). Construction synonym expansion. Reranking with score threshold ≥2, up to 20 chunks to LLM. 3000-token answer limit, 8 sources with 500-char excerpts. Revision history and legends indexed as dedicated chunks.
+- **AI Reranking**: GPT-4o scores retrieved chunks for relevance.
+- **Contextual AI**: Uses top reranked chunks with GPT-4o for answer generation.
+- **Safety**: Employs strict system prompts, exact quoting, source citation, and conflict flagging to prevent hallucination.
+- **SSE Streaming**: Chat responses stream via Server-Sent Events.
+- **Confidence Scoring**: AI self-rates answer confidence.
+- **User Feedback & Verified Facts**: Users provide feedback, and positive feedback on high-confidence answers creates verified facts for future use.
+- **Data Correction System**: Allows inline editing of OCR errors with audit trails, triggering embedding regeneration.
+- **Self-Healing Retry Cascade**: Implements multiple search strategies and auto-reformulates questions on low confidence or failure.
+- **Unanswered Question Catalog**: Endpoints for reviewing and resolving gaps.
+- **Auto-validation**: `validateConstructionData()` stores warnings during indexing.
+- **Extraction Integrity System**: Verifies and auto-repairs incomplete construction extractions on server boot and document attachment.
 
 ## UI/UX
-
-The frontend is branded as **ConstructAI** and focuses on the AI assistant experience. Document processing features (OCR, PDF extraction, specs, schemas, history) are hidden from the navigation and routes. The visible interface includes:
--   **Projects list** (home page `/`): Create, view, and manage construction projects.
--   **Project detail** (`/projects/:id`): AI chat assistant with confidence badges, thumbs up/down feedback, source citations, and document management tabs.
--   Document processing APIs remain available for backend use but are not exposed in the UI navigation.
+Branded as **ConstructAI**, the frontend focuses on the AI assistant. Document processing features are backend-only. The UI includes:
+-   **Projects list**: Create and manage projects.
+-   **Project detail**: AI chat with feedback, citations, and document management.
 
 ## API Endpoints
-
-A comprehensive set of RESTful API endpoints for managing schemas, extractions (OCR, PDF, spec), projects, project documents, and the RAG chat functionality.
+Comprehensive RESTful APIs for managing schemas, extractions, projects, and RAG chat.
 
 ## CI/CD
-
--   **GitHub Actions Pipeline** (`.github/workflows/ci.yml`): Runs on every push to `main` and all PRs. All jobs are **blocking** (safety-critical):
-    -   **TypeScript Check**: Typechecks API server and frontend — fails the pipeline on any TS error.
-    -   **Build**: Builds API server (esbuild) and frontend (Vite). Verifies build artifacts exist. Frontend build requires `PORT` and `BASE_PATH` env vars.
-    -   **Schema Validation**: Runs `tsc` on the DB schema and verifies all 7 required tables are exported by name.
-    -   **File Integrity**: Confirms all critical source files exist and Python scripts compile.
-    -   **CI Summary**: Aggregates results and fails if any job fails.
--   **Local Validation Script** (`scripts/ci/validate.sh`): Run via `pnpm validate`. All 18 checks are enforcing:
-    -   TypeScript (blocking), builds (blocking), database schema sync (requires `DATABASE_URL` unless `SKIP_DB_CHECKS=1`), data integrity (null embeddings, incomplete extractions), required files, Python deps, ONNX model.
--   **TypeScript Status**: 0 errors across API server and frontend. Libraries use `skipLibCheck` for upstream type compatibility.
+- **GitHub Actions**: Blocking pipeline for TypeScript checks, builds, schema validation, and file integrity on every push and PR.
+- **Local Validation Script**: `scripts/ci/validate.sh` (`pnpm validate`) enforces 18 checks including TypeScript, builds, database sync, and data integrity.
 
 # External Dependencies
 
 -   **AI (General)**: OpenAI via Replit AI Integrations (GPT-5.2 Vision).
 -   **AI (PDF Pipeline)**: GPT-4o via Replit AI Integrations.
--   **Local Embeddings**: `all-MiniLM-L6-v2` ONNX model (served via `onnxruntime-node`).
+-   **Local Embeddings**: `all-MiniLM-L6-v2` ONNX model.
 -   **OpenAPI Codegen**: Orval.
 -   **Database**: PostgreSQL with `pgvector` extension.
 -   **PDF Processing (Python)**: `pdf2image`, `opencv-python-headless`, `pytesseract`, `openai`, `pillow`, `numpy`.
--   **System Utilities**: Poppler (for PDF rendering), Tesseract OCR engine, `libGL`.
+-   **System Utilities**: Poppler, Tesseract OCR engine, `libGL`.

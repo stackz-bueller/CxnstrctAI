@@ -445,11 +445,11 @@ router.post("/:id/chat", async (req, res) => {
     const searchStrategies: string[] = [];
 
     function dedupeChunks(existing: typeof relevantChunks, incoming: typeof relevantChunks) {
-      const seen = new Set(existing.map(c => c.content.slice(0, 120)));
+      const seen = new Set(existing.map(c => c.content.slice(0, 300)));
       for (const c of incoming) {
-        if (!seen.has(c.content.slice(0, 120))) {
+        if (!seen.has(c.content.slice(0, 300))) {
           existing.push(c);
-          seen.add(c.content.slice(0, 120));
+          seen.add(c.content.slice(0, 300));
         }
       }
     }
@@ -565,11 +565,11 @@ ${chunks.map((c, i) => `[${i}] ${c.content.slice(0, 400)}`).join("\n\n")}`;
             const scored = chunks.map((c, i) => ({ chunk: c, score: scores[i] ?? 0 }));
             scored.sort((a, b) => b.score - a.score);
             let result = scored
-              .filter((s) => s.score >= 3)
-              .slice(0, 15)
+              .filter((s) => s.score >= 2)
+              .slice(0, 20)
               .map((s) => s.chunk);
             if (result.length < 5) {
-              result = scored.slice(0, 10).map((s) => s.chunk);
+              result = scored.slice(0, 12).map((s) => s.chunk);
             }
             return result;
           }
@@ -577,7 +577,7 @@ ${chunks.map((c, i) => `[${i}] ${c.content.slice(0, 400)}`).join("\n\n")}`;
       } catch (rerankErr) {
         console.error("Rerank failed, using original ranking:", rerankErr);
       }
-      return chunks.slice(0, 15);
+      return chunks.slice(0, 20);
     }
 
     function buildSystemPrompt(projectName: string) {
@@ -632,7 +632,7 @@ FORMAT: Use clear structure. For tables, use markdown tables. For lists, use bul
           { role: "user", content: userMessage },
         ],
         temperature: 0.05,
-        max_tokens: 2000,
+        max_tokens: 3000,
       });
       return parseConfidence(completion.choices[0]?.message?.content ?? "No response generated.");
     }
@@ -646,7 +646,7 @@ FORMAT: Use clear structure. For tables, use markdown tables. For lists, use bul
           { role: "user", content: userMessage },
         ],
         temperature: 0.05,
-        max_tokens: 2000,
+        max_tokens: 3000,
         stream: true,
       });
       let fullText = "";
@@ -680,11 +680,11 @@ FORMAT: Use clear structure. For tables, use markdown tables. For lists, use bul
       res.setHeader("Connection", "keep-alive");
       res.flushHeaders();
 
-      const sources = usedChunks.slice(0, 5).map((c) => ({
+      const sources = usedChunks.slice(0, 8).map((c) => ({
         documentName: c.documentName,
         documentType: c.documentType,
         sectionLabel: c.sectionLabel,
-        excerpt: c.content.slice(0, 300) + (c.content.length > 300 ? "…" : ""),
+        excerpt: c.content.slice(0, 500) + (c.content.length > 500 ? "…" : ""),
       }));
       res.write(`data: ${JSON.stringify({ type: "sources", sources })}\n\n`);
 
@@ -791,11 +791,11 @@ Return ONLY a JSON array of search strings. Example: ["masonry repointing quanti
       });
     }
 
-    const sources = usedChunks.slice(0, 5).map((c) => ({
+    const sources = usedChunks.slice(0, 8).map((c) => ({
       documentName: c.documentName,
       documentType: c.documentType,
       sectionLabel: c.sectionLabel,
-      excerpt: c.content.slice(0, 300) + (c.content.length > 300 ? "…" : ""),
+      excerpt: c.content.slice(0, 500) + (c.content.length > 500 ? "…" : ""),
     }));
 
     const [msg] = await db
