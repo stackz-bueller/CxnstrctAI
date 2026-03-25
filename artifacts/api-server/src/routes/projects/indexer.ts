@@ -185,7 +185,8 @@ async function insertBatch(
       const vec = vectors[i];
       if (!vec || vec.some((v) => !Number.isFinite(v))) continue;
       validIds.push(inserted[i].id);
-      whenClauses.push(sql`WHEN ${inserted[i].id} THEN ${sql.raw(`'[${vec.join(",")}]'::vector`)}`);
+      const vecString = `[${vec.join(",")}]`;
+      whenClauses.push(sql`WHEN ${inserted[i].id} THEN ${vecString}::vector`);
     }
     if (whenClauses.length > 0) {
       await db.execute(
