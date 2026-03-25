@@ -42,6 +42,12 @@ type Project = {
   documents: ProjectDocument[];
 };
 
+type ExtractionProgress = {
+  status: string;
+  processedPages: number;
+  totalPages: number;
+};
+
 type ProjectDocument = {
   id: number;
   projectId: number;
@@ -52,6 +58,7 @@ type ProjectDocument = {
   chunkCount: number;
   errorMessage: string | null;
   createdAt: string;
+  extractionProgress?: ExtractionProgress;
 };
 
 type ChatMessage = {
@@ -135,7 +142,10 @@ export default function ProjectDetailPage() {
       const data = await res.json();
       setProject(data);
       const hasIndexing = data.documents?.some((d: ProjectDocument) => d.indexStatus === "indexing" || d.indexStatus === "pending");
-      setPollingActive(hasIndexing);
+      const hasExtracting = data.documents?.some((d: ProjectDocument) =>
+        d.extractionProgress && (d.extractionProgress.status === "processing" || d.extractionProgress.status === "incomplete")
+      );
+      setPollingActive(hasIndexing || hasExtracting);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load project");
     } finally {
@@ -453,6 +463,9 @@ export default function ProjectDetailPage() {
                   const status = INDEX_STATUS[doc.indexStatus] ?? INDEX_STATUS.pending;
                   const Icon = meta.icon;
                   const StatusIcon = status.icon;
+                  const ep = doc.extractionProgress;
+                  const isExtracting = ep && (ep.status === "processing" || ep.status === "incomplete");
+                  const extractionPct = ep && ep.totalPages > 0 ? Math.round((ep.processedPages / ep.totalPages) * 100) : 0;
                   return (
                     <div key={doc.id} className={`rounded-lg border ${meta.border} ${meta.bg} p-3`}>
                       <div className="flex items-start gap-2">
@@ -460,11 +473,35 @@ export default function ProjectDetailPage() {
                         <div className="flex-1 min-w-0">
                           <p className="text-xs font-medium text-foreground truncate">{doc.documentName}</p>
                           <p className="text-xs text-muted-foreground">{meta.label}</p>
-                          <div className={`flex items-center gap-1 mt-1 text-xs ${status.color}`}>
-                            <StatusIcon className={`size-3 ${"spin" in status && status.spin ? "animate-spin" : ""}`} />
-                            {status.label}
-                            {doc.indexStatus === "indexed" && <span className="text-muted-foreground">· {doc.chunkCount} chunks</span>}
-                          </div>
+                          {isExtracting ? (
+                            <div className="mt-1.5 space-y-1">
+                              <div className="flex items-center gap-1.5 text-xs text-blue-500">
+                                <Loader2 className="size-3 animate-spin" />
+                                <span>Extracting pages…</span>
+                                <span className="text-muted-foreground ml-auto">{ep.processedPages}/{ep.totalPages}</span>
+                              </div>
+                              <div className="w-full h-1.5 bg-muted rounded-full overflow-hidden">
+                                <motion.div
+                                  className="h-full bg-blue-500 rounded-full"
+                                  initial={{ width: 0 }}
+                                  animate={{ width: `${extractionPct}%` }}
+                                  transition={{ duration: 0.5, ease: "easeOut" }}
+                                />
+                              </div>
+                              <p className="text-[10px] text-muted-foreground">{extractionPct}% complete — auto-resumes if interrupted</p>
+                            </div>
+                          ) : (
+                            <>
+                              <div className={`flex items-center gap-1 mt-1 text-xs ${status.color}`}>
+                                <StatusIcon className={`size-3 ${"spin" in status && status.spin ? "animate-spin" : ""}`} />
+                                {status.label}
+                                {doc.indexStatus === "indexed" && <span className="text-muted-foreground">· {doc.chunkCount} chunks</span>}
+                                {ep && ep.status === "completed" && ep.totalPages > 0 && (
+                                  <span className="text-muted-foreground">· {ep.totalPages} pages</span>
+                                )}
+                              </div>
+                            </>
+                          )}
                           {doc.errorMessage && (
                             <p className="text-xs text-destructive mt-1 truncate" title={doc.errorMessage}>{doc.errorMessage}</p>
                           )}

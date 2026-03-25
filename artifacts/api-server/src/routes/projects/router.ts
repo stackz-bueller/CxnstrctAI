@@ -11,7 +11,7 @@ import {
   extractionsTable,
   unansweredQuestionsTable,
 } from "@workspace/db";
-import { eq, and, desc, lt } from "drizzle-orm";
+import { eq, and, desc, lt, sql } from "drizzle-orm";
 import { z } from "zod";
 import { openai } from "@workspace/integrations-openai-ai-server";
 import { indexProjectDocument, keywordSearch, validateConstructionData } from "./indexer";
@@ -68,7 +68,35 @@ router.get("/:id", async (req, res) => {
       .from(projectDocumentsTable)
       .where(eq(projectDocumentsTable.projectId, id))
       .orderBy(projectDocumentsTable.createdAt);
-    res.json({ ...project, documents });
+
+    const constructionDocIds = documents
+      .filter((d) => d.documentType === "construction")
+      .map((d) => d.documentId);
+
+    let extractionProgress: Record<number, { status: string; processedPages: number; totalPages: number }> = {};
+    if (constructionDocIds.length > 0) {
+      const extractions = await db
+        .select({
+          id: constructionExtractionsTable.id,
+          status: constructionExtractionsTable.status,
+          processedPages: constructionExtractionsTable.processedPages,
+          totalPages: constructionExtractionsTable.totalPages,
+        })
+        .from(constructionExtractionsTable)
+        .where(sql`${constructionExtractionsTable.id} IN (${sql.join(constructionDocIds.map((id) => sql`${id}`), sql`, `)})`);
+      for (const ext of extractions) {
+        extractionProgress[ext.id] = { status: ext.status, processedPages: ext.processedPages, totalPages: ext.totalPages };
+      }
+    }
+
+    const enrichedDocs = documents.map((doc) => {
+      if (doc.documentType === "construction" && extractionProgress[doc.documentId]) {
+        return { ...doc, extractionProgress: extractionProgress[doc.documentId] };
+      }
+      return doc;
+    });
+
+    res.json({ ...project, documents: enrichedDocs });
   } catch (err) {
     req.log.error({ err }, "Failed to get project");
     res.status(500).json({ error: "Failed to get project" });
