@@ -10,6 +10,8 @@ import {
   financialExtractionsTable,
   extractionsTable,
   unansweredQuestionsTable,
+  dataCorrectionsTable,
+  verifiedFactsTable,
 } from "@workspace/db";
 import { eq, and, desc, lt, sql } from "drizzle-orm";
 import { z } from "zod";
@@ -624,9 +626,21 @@ FORMAT: Use clear structure. For tables, use markdown tables. For lists, use bul
       return { answer, confidence };
     }
 
+    const verifiedFacts = await db.select().from(verifiedFactsTable)
+      .where(eq(verifiedFactsTable.projectId, projectId))
+      .orderBy(desc(verifiedFactsTable.createdAt))
+      .limit(20);
+
+    let verifiedFactsBlock = "";
+    if (verifiedFacts.length > 0) {
+      verifiedFactsBlock = "\n\n--- VERIFIED FACTS (previously confirmed correct by project team) ---\n" +
+        verifiedFacts.map((f) => `Q: ${f.question}\nA: ${f.answer.slice(0, 500)}`).join("\n\n") +
+        "\n--- END VERIFIED FACTS ---\n\nUse verified facts to inform your answer when relevant, but still cite original document sources.";
+    }
+
     let usedChunks = await rerankChunks(relevantChunks, question);
     const sysPrompt = buildSystemPrompt(project.name);
-    let { answer, confidence } = await askLLM(sysPrompt, buildContextBlock(usedChunks), question);
+    let { answer, confidence } = await askLLM(sysPrompt, buildContextBlock(usedChunks) + verifiedFactsBlock, question);
 
     const isNotFound = answer.includes("was not found in the project documents") || answer.includes("not found in the provided") || (confidence !== null && confidence <= 2);
 
@@ -773,6 +787,33 @@ router.post("/:id/chat/:chatId/feedback", async (req, res) => {
       }
     }
 
+    if (feedback === "positive" && existing.confidence && existing.confidence >= 7) {
+      const [precedingUserMsg] = await db.select().from(projectChatsTable)
+        .where(and(
+          eq(projectChatsTable.projectId, projectId),
+          eq(projectChatsTable.role, "user"),
+          lt(projectChatsTable.id, chatId),
+        ))
+        .orderBy(desc(projectChatsTable.id))
+        .limit(1);
+
+      if (precedingUserMsg) {
+        const existing_fact = await db.select().from(verifiedFactsTable).where(
+          and(eq(verifiedFactsTable.projectId, projectId), eq(verifiedFactsTable.chatId, chatId))
+        );
+        if (existing_fact.length === 0) {
+          await db.insert(verifiedFactsTable).values({
+            projectId,
+            question: precedingUserMsg.content,
+            answer: existing.content,
+            chatId,
+            confidence: existing.confidence,
+          });
+          req.log.info({ projectId, chatId }, "Verified fact stored from positive feedback");
+        }
+      }
+    }
+
     res.json({ success: true });
   } catch (err) {
     req.log.error({ err }, "Failed to save feedback");
@@ -791,6 +832,127 @@ router.get("/:id/unanswered", async (req, res) => {
   } catch (err) {
     req.log.error({ err }, "Failed to fetch unanswered questions");
     res.status(500).json({ error: "Failed to fetch unanswered questions" });
+  }
+});
+
+router.get("/:id/documents/:docId/chunks", async (req, res) => {
+  try {
+    const projectId = parseInt(req.params.id, 10);
+    const docId = parseInt(req.params.docId, 10);
+    const page = parseInt((req.query.page as string) ?? "1", 10);
+    const limit = Math.min(parseInt((req.query.limit as string) ?? "20", 10), 100);
+    const search = ((req.query.search as string) ?? "").trim();
+    const offset = (page - 1) * limit;
+
+    const [doc] = await db.select().from(projectDocumentsTable).where(
+      and(eq(projectDocumentsTable.id, docId), eq(projectDocumentsTable.projectId, projectId))
+    );
+    if (!doc) { res.status(404).json({ error: "Document not found" }); return; }
+
+    const baseConditions = [
+      eq(documentChunksTable.projectDocumentId, docId),
+      eq(documentChunksTable.projectId, projectId),
+    ];
+    if (search) {
+      baseConditions.push(sql`${documentChunksTable.content} ILIKE ${'%' + search + '%'}` as any);
+    }
+
+    const whereClause = and(...baseConditions);
+
+    const [{ count: totalChunks }] = await db.select({ count: sql<number>`count(*)::int` })
+      .from(documentChunksTable)
+      .where(whereClause);
+
+    const chunks = await db.select({
+      id: documentChunksTable.id,
+      chunkIndex: documentChunksTable.chunkIndex,
+      content: documentChunksTable.content,
+      sectionLabel: documentChunksTable.sectionLabel,
+    })
+      .from(documentChunksTable)
+      .where(whereClause)
+      .orderBy(documentChunksTable.chunkIndex)
+      .limit(limit)
+      .offset(offset);
+
+    res.json({
+      documentName: doc.documentName,
+      documentType: doc.documentType,
+      chunks,
+      pagination: { page, limit, total: totalChunks, totalPages: Math.ceil(totalChunks / limit) },
+    });
+  } catch (err) {
+    req.log.error({ err }, "Failed to list chunks");
+    res.status(500).json({ error: "Failed to list chunks" });
+  }
+});
+
+router.patch("/:id/chunks/:chunkId", async (req, res) => {
+  try {
+    const projectId = parseInt(req.params.id, 10);
+    const chunkId = parseInt(req.params.chunkId, 10);
+
+    const bodySchema = z.object({
+      correctedContent: z.string().min(1),
+      reason: z.string().optional(),
+    });
+    const parsed = bodySchema.safeParse(req.body);
+    if (!parsed.success) { res.status(400).json({ error: "Invalid body", details: parsed.error.issues }); return; }
+
+    const [chunk] = await db.select().from(documentChunksTable).where(
+      and(eq(documentChunksTable.id, chunkId), eq(documentChunksTable.projectId, projectId))
+    );
+    if (!chunk) { res.status(404).json({ error: "Chunk not found" }); return; }
+
+    const originalContent = chunk.content;
+    const { correctedContent, reason } = parsed.data;
+
+    if (originalContent === correctedContent) { res.status(400).json({ error: "No changes detected" }); return; }
+
+    await db.insert(dataCorrectionsTable).values({
+      projectId,
+      chunkId,
+      originalContent,
+      correctedContent,
+      reason: reason || null,
+    });
+
+    await db.update(documentChunksTable)
+      .set({ content: correctedContent, embedding: null })
+      .where(eq(documentChunksTable.id, chunkId));
+
+    req.log.info({ chunkId, projectId }, "Data correction applied — embedding will regenerate on next backfill");
+
+    res.json({ success: true, chunkId, message: "Correction applied. Embedding will regenerate automatically." });
+  } catch (err) {
+    req.log.error({ err }, "Failed to apply correction");
+    res.status(500).json({ error: "Failed to apply correction" });
+  }
+});
+
+router.get("/:id/corrections", async (req, res) => {
+  try {
+    const projectId = parseInt(req.params.id, 10);
+    const corrections = await db.select().from(dataCorrectionsTable)
+      .where(eq(dataCorrectionsTable.projectId, projectId))
+      .orderBy(desc(dataCorrectionsTable.createdAt));
+    res.json({ corrections });
+  } catch (err) {
+    req.log.error({ err }, "Failed to list corrections");
+    res.status(500).json({ error: "Failed to list corrections" });
+  }
+});
+
+router.get("/:id/verified-facts", async (req, res) => {
+  try {
+    const projectId = parseInt(req.params.id, 10);
+    const facts = await db.select().from(verifiedFactsTable)
+      .where(eq(verifiedFactsTable.projectId, projectId))
+      .orderBy(desc(verifiedFactsTable.createdAt));
+    res.json({ facts });
+  } catch (err) {
+    req.log.error({ err }, "Failed to list verified facts");
+    res.status(500).json({ error: "Failed to list verified facts" });
   }
 });
 

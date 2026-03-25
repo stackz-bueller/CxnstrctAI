@@ -97,3 +97,29 @@ export const unansweredQuestionsTable = pgTable("unanswered_questions", {
 });
 
 export type UnansweredQuestion = typeof unansweredQuestionsTable.$inferSelect;
+
+export const dataCorrectionsTable = pgTable("data_corrections", {
+  id: serial("id").primaryKey(),
+  projectId: integer("project_id").notNull(),
+  chunkId: integer("chunk_id").notNull(),
+  originalContent: text("original_content").notNull(),
+  correctedContent: text("corrected_content").notNull(),
+  reason: text("reason"),
+  correctedBy: text("corrected_by").notNull().default("field_user"),
+  status: text("status").notNull().default("applied"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export type DataCorrection = typeof dataCorrectionsTable.$inferSelect;
+
+export const verifiedFactsTable = pgTable("verified_facts", {
+  id: serial("id").primaryKey(),
+  projectId: integer("project_id").notNull(),
+  question: text("question").notNull(),
+  answer: text("answer").notNull(),
+  chatId: integer("chat_id"),
+  confidence: real("confidence"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export type VerifiedFact = typeof verifiedFactsTable.$inferSelect;

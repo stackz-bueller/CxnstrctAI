@@ -30,6 +30,13 @@ import {
   Shield,
   ShieldAlert,
   ShieldCheck,
+  Search,
+  Edit3,
+  Save,
+  X,
+  ArrowLeft,
+  ArrowRight,
+  History,
 } from "lucide-react";
 
 const API_BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -86,6 +93,20 @@ type AvailableDoc = {
   type: "spec" | "construction" | "financial" | "ocr";
 };
 
+type ChunkData = {
+  id: number;
+  chunkIndex: number;
+  content: string;
+  sectionLabel: string | null;
+};
+
+type ChunkPagination = {
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
+};
+
 const DOC_TYPE_META = {
   spec: { label: "Specification", icon: BookOpen, color: "text-violet-500", bg: "bg-violet-500/10", border: "border-violet-500/20" },
   construction: { label: "Construction Drawing", icon: HardHat, color: "text-amber-500", bg: "bg-amber-500/10", border: "border-amber-500/20" },
@@ -134,6 +155,17 @@ export default function ProjectDetailPage() {
   const [expandedSources, setExpandedSources] = useState<Set<number>>(new Set());
 
   const [pollingActive, setPollingActive] = useState(false);
+
+  const [browsingDocId, setBrowsingDocId] = useState<number | null>(null);
+  const [browsingDocName, setBrowsingDocName] = useState("");
+  const [chunks, setChunks] = useState<ChunkData[]>([]);
+  const [chunkPagination, setChunkPagination] = useState<ChunkPagination | null>(null);
+  const [chunksLoading, setChunksLoading] = useState(false);
+  const [chunkSearch, setChunkSearch] = useState("");
+  const [editingChunkId, setEditingChunkId] = useState<number | null>(null);
+  const [editContent, setEditContent] = useState("");
+  const [editReason, setEditReason] = useState("");
+  const [savingCorrection, setSavingCorrection] = useState(false);
 
   const fetchProject = useCallback(async () => {
     try {
@@ -296,6 +328,75 @@ export default function ProjectDetailPage() {
     if (!confirm("Clear all chat history for this project?")) return;
     await fetch(`${API_BASE}/api/projects/${projectId}/chat`, { method: "DELETE" });
     setMessages([]);
+  }
+
+  async function fetchChunks(docId: number, page = 1, search = "") {
+    setChunksLoading(true);
+    try {
+      const params = new URLSearchParams({ page: String(page), limit: "15" });
+      if (search) params.set("search", search);
+      const res = await fetch(`${API_BASE}/api/projects/${projectId}/documents/${docId}/chunks?${params}`);
+      if (!res.ok) throw new Error("Failed to load chunks");
+      const data = await res.json();
+      setChunks(data.chunks);
+      setChunkPagination(data.pagination);
+      setBrowsingDocName(data.documentName);
+    } catch { /* ignore */ } finally {
+      setChunksLoading(false);
+    }
+  }
+
+  function openChunkBrowser(doc: ProjectDocument) {
+    setBrowsingDocId(doc.id);
+    setBrowsingDocName(doc.documentName);
+    setChunkSearch("");
+    setEditingChunkId(null);
+    fetchChunks(doc.id, 1, "");
+  }
+
+  function closeChunkBrowser() {
+    setBrowsingDocId(null);
+    setChunks([]);
+    setChunkPagination(null);
+    setEditingChunkId(null);
+    setChunkSearch("");
+  }
+
+  function startEdit(chunk: ChunkData) {
+    setEditingChunkId(chunk.id);
+    setEditContent(chunk.content);
+    setEditReason("");
+  }
+
+  function cancelEdit() {
+    setEditingChunkId(null);
+    setEditContent("");
+    setEditReason("");
+  }
+
+  async function saveCorrection(chunkId: number) {
+    if (!editContent.trim()) return;
+    setSavingCorrection(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/projects/${projectId}/chunks/${chunkId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ correctedContent: editContent, reason: editReason || undefined }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        alert(data.error || "Failed to save correction");
+        return;
+      }
+      setChunks((prev) => prev.map((c) => c.id === chunkId ? { ...c, content: editContent } : c));
+      setEditingChunkId(null);
+      setEditContent("");
+      setEditReason("");
+    } catch {
+      alert("Failed to save correction");
+    } finally {
+      setSavingCorrection(false);
+    }
   }
 
   async function submitFeedback(msgId: number, feedback: "positive" | "negative") {
@@ -507,6 +608,15 @@ export default function ProjectDetailPage() {
                           )}
                         </div>
                         <div className="flex items-center gap-1 shrink-0">
+                          {doc.indexStatus === "indexed" && (
+                            <button
+                              onClick={() => openChunkBrowser(doc)}
+                              className="size-6 rounded flex items-center justify-center text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors"
+                              title="Browse & correct data"
+                            >
+                              <Search className="size-3" />
+                            </button>
+                          )}
                           {doc.indexStatus === "failed" && (
                             <button
                               onClick={() => reindexDocument(doc.id)}
@@ -538,6 +648,152 @@ export default function ProjectDetailPage() {
               Documents are being indexed. Chat will be available once indexing is complete.
             </div>
           )}
+
+          <AnimatePresence>
+            {browsingDocId !== null && (
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: 20 }}
+                className="rounded-xl border border-border bg-card p-4 space-y-3"
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <button onClick={closeChunkBrowser} className="size-6 rounded flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors shrink-0">
+                      <X className="size-4" />
+                    </button>
+                    <h3 className="font-semibold text-sm text-foreground truncate">
+                      Data Browser
+                    </h3>
+                    {chunkPagination && (
+                      <span className="text-xs text-muted-foreground shrink-0">
+                        {chunkPagination.total} chunks
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                <p className="text-xs text-muted-foreground truncate">{browsingDocName}</p>
+
+                <div className="flex items-center gap-2">
+                  <div className="relative flex-1">
+                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
+                    <input
+                      type="text"
+                      value={chunkSearch}
+                      onChange={(e) => setChunkSearch(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && browsingDocId) fetchChunks(browsingDocId, 1, chunkSearch);
+                      }}
+                      placeholder="Search chunks (e.g. address, quantity)…"
+                      className="w-full pl-8 pr-3 py-2 text-xs rounded-lg border border-border bg-muted/30 text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary/50"
+                    />
+                  </div>
+                  <button
+                    onClick={() => browsingDocId && fetchChunks(browsingDocId, 1, chunkSearch)}
+                    className="px-3 py-2 rounded-lg bg-primary/10 text-primary text-xs font-medium hover:bg-primary/20 transition-colors"
+                  >
+                    Search
+                  </button>
+                </div>
+
+                {chunksLoading ? (
+                  <div className="flex items-center justify-center py-8 text-muted-foreground gap-2">
+                    <Loader2 className="size-4 animate-spin" />
+                    <span className="text-xs">Loading chunks…</span>
+                  </div>
+                ) : chunks.length === 0 ? (
+                  <p className="text-xs text-muted-foreground text-center py-6">No chunks found.</p>
+                ) : (
+                  <div className="space-y-2 max-h-[50vh] overflow-y-auto">
+                    {chunks.map((chunk) => (
+                      <div key={chunk.id} className="rounded-lg border border-border bg-muted/20 p-3 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span className="text-[10px] font-mono text-muted-foreground shrink-0">#{chunk.chunkIndex}</span>
+                            {chunk.sectionLabel && (
+                              <span className="text-[11px] text-muted-foreground truncate">{chunk.sectionLabel}</span>
+                            )}
+                          </div>
+                          {editingChunkId !== chunk.id && (
+                            <button
+                              onClick={() => startEdit(chunk)}
+                              className="flex items-center gap-1 px-2 py-1 rounded text-[11px] text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors shrink-0"
+                              title="Edit this chunk"
+                            >
+                              <Edit3 className="size-3" />
+                              Correct
+                            </button>
+                          )}
+                        </div>
+
+                        {editingChunkId === chunk.id ? (
+                          <div className="space-y-2">
+                            <textarea
+                              value={editContent}
+                              onChange={(e) => setEditContent(e.target.value)}
+                              rows={8}
+                              className="w-full text-xs p-2.5 rounded-lg border border-primary/30 bg-background text-foreground focus:outline-none focus:border-primary resize-y font-mono"
+                            />
+                            <input
+                              type="text"
+                              value={editReason}
+                              onChange={(e) => setEditReason(e.target.value)}
+                              placeholder="Reason for correction (optional, e.g. 'OCR misread address')"
+                              className="w-full text-xs px-2.5 py-2 rounded-lg border border-border bg-muted/30 text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary/50"
+                            />
+                            <div className="flex items-center gap-2 justify-end">
+                              <button
+                                onClick={cancelEdit}
+                                className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                              >
+                                <X className="size-3" />
+                                Cancel
+                              </button>
+                              <button
+                                onClick={() => saveCorrection(chunk.id)}
+                                disabled={savingCorrection || editContent === chunk.content}
+                                className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors"
+                              >
+                                {savingCorrection ? <Loader2 className="size-3 animate-spin" /> : <Save className="size-3" />}
+                                Save Correction
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <p className="text-xs text-foreground/80 leading-relaxed whitespace-pre-wrap line-clamp-6">{chunk.content}</p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {chunkPagination && chunkPagination.totalPages > 1 && (
+                  <div className="flex items-center justify-between pt-2 border-t border-border">
+                    <button
+                      onClick={() => browsingDocId && fetchChunks(browsingDocId, chunkPagination.page - 1, chunkSearch)}
+                      disabled={chunkPagination.page <= 1}
+                      className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs text-muted-foreground hover:text-foreground hover:bg-muted disabled:opacity-30 transition-colors"
+                    >
+                      <ArrowLeft className="size-3" />
+                      Previous
+                    </button>
+                    <span className="text-xs text-muted-foreground">
+                      Page {chunkPagination.page} of {chunkPagination.totalPages}
+                    </span>
+                    <button
+                      onClick={() => browsingDocId && fetchChunks(browsingDocId, chunkPagination.page + 1, chunkSearch)}
+                      disabled={chunkPagination.page >= chunkPagination.totalPages}
+                      className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs text-muted-foreground hover:text-foreground hover:bg-muted disabled:opacity-30 transition-colors"
+                    >
+                      Next
+                      <ArrowRight className="size-3" />
+                    </button>
+                  </div>
+                )}
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
         )}
 
