@@ -447,7 +447,7 @@ async function indexOcr(
 
   if (row.rawText) pending.push(...makeChunks(`${label} – Raw OCR:\n${row.rawText}`, label));
   if (row.fields && typeof row.fields === "object") {
-    const fieldLines = Object.entries(row.fields as Record<string, unknown>)
+    const fieldLines = Object.entries(row.fields as unknown as Record<string, unknown>)
       .filter(([, v]) => v != null)
       .map(([k, v]) => `${k}: ${JSON.stringify(v)}`)
       .join("\n");

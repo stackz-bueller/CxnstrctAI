@@ -254,11 +254,11 @@ function DivisionGroup({
 function ExtractionDetail({ id }: { id: number }) {
   const { data, isLoading } = useGetSpecExtraction(id, {
     query: {
-      refetchInterval: (q) => {
+      refetchInterval: (q: any) => {
         const status = (q.state.data as SpecExtractionDetail | undefined)?.status;
         return status === "processing" ? 4000 : false;
       },
-    },
+    } as any,
   });
 
   if (isLoading) {
@@ -363,7 +363,7 @@ function ExtractionsList({
   onSelect: (id: number) => void;
 }) {
   const { data, isLoading } = useListSpecExtractions({
-    query: { refetchInterval: 5000 },
+    query: { refetchInterval: 5000 } as any,
   });
   const items: SpecExtractionSummary[] = data?.extractions ?? [];
 

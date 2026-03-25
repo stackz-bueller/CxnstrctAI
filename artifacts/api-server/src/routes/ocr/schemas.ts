@@ -24,7 +24,7 @@ router.post("/", async (req, res) => {
   try {
     const body = CreateSchemaBody.parse(req.body);
     const fieldsArr = Array.isArray(body.fields) ? body.fields : [];
-    const validatedFields = fieldsArr.map((f) => schemaFieldSchema.parse(f));
+    const validatedFields = fieldsArr.map((f: unknown) => schemaFieldSchema.parse(f));
     const [schema] = await db
       .insert(documentSchemasTable)
       .values({

@@ -162,7 +162,7 @@ router.post("/", upload.single("file"), async (req, res) => {
           total_pages: number; project_name: string; sections: unknown[]; processing_time_ms: number;
         };
         await db.update(specExtractionsTable)
-          .set({ status: "completed", totalPages: r.total_pages, projectName: r.project_name || null, sections: r.sections, processingTimeMs: r.processing_time_ms, updatedAt: new Date() })
+          .set({ status: "completed", totalPages: r.total_pages, projectName: r.project_name || null, sections: r.sections as any, processingTimeMs: r.processing_time_ms, updatedAt: new Date() })
           .where(eq(specExtractionsTable.id, record.id));
       } catch (err) {
         req.log.error({ err }, "Smart spec pipeline failed");
@@ -189,7 +189,7 @@ router.post("/", upload.single("file"), async (req, res) => {
           total_pages: number; pages: unknown[]; processing_time_ms: number;
         };
         await db.update(constructionExtractionsTable)
-          .set({ status: "completed", totalPages: r.total_pages, pages: r.pages, processingTimeMs: r.processing_time_ms, updatedAt: new Date() })
+          .set({ status: "completed", totalPages: r.total_pages, pages: r.pages as any, processingTimeMs: r.processing_time_ms, updatedAt: new Date() })
           .where(eq(constructionExtractionsTable.id, record.id));
       } catch (err) {
         req.log.error({ err }, "Smart construction pipeline failed");

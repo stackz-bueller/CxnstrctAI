@@ -83,7 +83,7 @@ function tokenize(text: string): { inputIds: bigint[]; attentionMask: bigint[]; 
 
 // ── ONNX inference ───────────────────────────────────────────────────────────
 type OrtModule = typeof import("onnxruntime-node");
-type InferenceSession = InstanceType<OrtModule["InferenceSession"]>;
+type InferenceSession = import("onnxruntime-node").InferenceSession;
 
 let ort: OrtModule | null = null;
 let session: InferenceSession | null = null;

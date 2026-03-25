@@ -371,7 +371,7 @@ router.post("/:id/reprocess", async (req, res) => {
           await db
             .update(constructionExtractionsTable)
             .set({
-              pages: allPages,
+              pages: allPages as any,
               processedPages: pagesSaved,
               totalPages,
               updatedAt: new Date(),
@@ -423,7 +423,7 @@ router.post("/:id/reprocess", async (req, res) => {
         .update(constructionExtractionsTable)
         .set({
           status: finalPages.length >= totalPages ? "completed" : "partial",
-          pages: finalPages,
+          pages: finalPages as any,
           processedPages: finalPages.length,
           totalPages,
           processingTimeMs,

@@ -1,0 +1,179 @@
+name: ConstructAI CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  NODE_VERSION: "20"
+  PNPM_VERSION: "9"
+
+jobs:
+  typecheck:
+    name: TypeScript Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: TypeCheck API Server
+        run: pnpm --filter @workspace/api-server run typecheck
+
+      - name: TypeCheck Frontend
+        run: pnpm --filter @workspace/ocr-extractor run typecheck
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    needs: typecheck
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Build API Server
+        run: pnpm --filter @workspace/api-server run build
+
+      - name: Build Frontend
+        run: pnpm --filter @workspace/ocr-extractor run build
+        env:
+          PORT: "3000"
+          BASE_PATH: "/"
+
+      - name: Verify build artifacts
+        run: |
+          test -f artifacts/api-server/dist/index.mjs || (echo "API build artifact missing" && exit 1)
+          test -d artifacts/ocr-extractor/dist || (echo "Frontend build artifact missing" && exit 1)
+          echo "All build artifacts verified"
+
+  schema-check:
+    name: Schema Validation
+    runs-on: ubuntu-latest
+    needs: typecheck
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: TypeCheck database schema
+        run: pnpm --filter @workspace/db exec tsc --noEmit --esModuleInterop --module nodenext --moduleResolution nodenext --target es2022 src/schema/projects.ts
+
+      - name: Verify required table exports
+        run: |
+          TABLES="projectsTable projectDocumentsTable documentChunksTable projectChatsTable dataCorrectionsTable verifiedFactsTable unansweredQuestionsTable"
+          MISSING=0
+          for table in $TABLES; do
+            if grep -q "export const $table" lib/db/src/schema/projects.ts; then
+              echo "✅ $table exported"
+            else
+              echo "❌ $table NOT exported"
+              MISSING=$((MISSING + 1))
+            fi
+          done
+          if [ "$MISSING" -gt 0 ]; then
+            echo "$MISSING required table(s) missing from schema exports"
+            exit 1
+          fi
+          echo "All required table definitions found and exported"
+
+  file-integrity:
+    name: File Integrity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify critical files exist
+        run: |
+          FILES=(
+            "artifacts/api-server/src/lib/integrity.ts"
+            "artifacts/api-server/src/routes/projects/router.ts"
+            "artifacts/api-server/src/routes/projects/indexer.ts"
+            "artifacts/api-server/src/index.ts"
+            "artifacts/api-server/build.mjs"
+            "artifacts/ocr-extractor/src/pages/project-detail.tsx"
+            "lib/db/src/schema/projects.ts"
+            "lib/db/src/index.ts"
+            "scripts/pdf_processor.py"
+            "scripts/spec_processor.py"
+            "scripts/financial_processor.py"
+          )
+          MISSING=0
+          for f in "${FILES[@]}"; do
+            if [ ! -f "$f" ]; then
+              echo "❌ Missing: $f"
+              MISSING=$((MISSING + 1))
+            else
+              echo "✅ $f"
+            fi
+          done
+          if [ "$MISSING" -gt 0 ]; then
+            echo ""
+            echo "$MISSING critical file(s) missing"
+            exit 1
+          fi
+          echo ""
+          echo "All critical files verified"
+
+      - name: Check Python scripts syntax
+        run: |
+          python3 -m py_compile scripts/pdf_processor.py
+          python3 -m py_compile scripts/spec_processor.py
+          python3 -m py_compile scripts/financial_processor.py
+          echo "All Python scripts compile successfully"
+
+  ci-summary:
+    name: CI Summary
+    runs-on: ubuntu-latest
+    needs: [typecheck, build, schema-check, file-integrity]
+    if: always()
+    steps:
+      - name: Check results
+        run: |
+          echo "═══════════════════════════════════════════════"
+          echo "  ConstructAI CI Pipeline Summary"
+          echo "═══════════════════════════════════════════════"
+          echo ""
+          if [ "${{ needs.typecheck.result }}" = "success" ]; then echo "  ✅ TypeScript Check"; else echo "  ❌ TypeScript Check"; fi
+          if [ "${{ needs.build.result }}" = "success" ]; then echo "  ✅ Build"; else echo "  ❌ Build"; fi
+          if [ "${{ needs.schema-check.result }}" = "success" ]; then echo "  ✅ Schema Validation"; else echo "  ❌ Schema Validation"; fi
+          if [ "${{ needs.file-integrity.result }}" = "success" ]; then echo "  ✅ File Integrity"; else echo "  ❌ File Integrity"; fi
+          echo ""
+
+          if [ "${{ needs.typecheck.result }}" != "success" ] || \
+             [ "${{ needs.build.result }}" != "success" ] || \
+             [ "${{ needs.schema-check.result }}" != "success" ] || \
+             [ "${{ needs.file-integrity.result }}" != "success" ]; then
+            echo "❌ CI FAILED — do not deploy"
+            exit 1
+          fi
+          echo "✅ ALL CHECKS PASSED — safe to deploy"

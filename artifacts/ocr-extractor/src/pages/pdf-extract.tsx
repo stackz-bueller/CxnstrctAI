@@ -152,20 +152,20 @@ function PageResultCard({ page }: { page: ConstructionPageResult }) {
       >
         <div className="flex items-center gap-3">
           <div className={`size-8 rounded-lg flex items-center justify-center text-sm font-bold ${
-            (page as Record<string, unknown>).voided
+            (page as any).voided
               ? "bg-red-500/20 border border-red-500/40 text-red-400"
               : "bg-primary/10 border border-primary/20 text-primary"
           }`}>
-            {(page as Record<string, unknown>).voided ? "X" : page.page_number}
+            {(page as any).voided ? "X" : page.page_number}
           </div>
           <div>
-            <p className={`text-sm font-semibold ${(page as Record<string, unknown>).voided ? "text-red-400 line-through" : "text-foreground"}`}>
-              {(page as Record<string, unknown>).voided ? "[VOIDED] " : ""}
+            <p className={`text-sm font-semibold ${(page as any).voided ? "text-red-400 line-through" : "text-foreground"}`}>
+              {(page as any).voided ? "[VOIDED] " : ""}
               {tb?.drawing_title || tb?.sheet_number || `Page ${page.page_number}`}
             </p>
             <p className="text-xs text-muted-foreground">
-              {(page as Record<string, unknown>).voided
-                ? `Removed from project: ${(page as Record<string, unknown>).voided_reason || "Page crossed out"}`
+              {(page as any).voided
+                ? `Removed from project: ${(page as any).voided_reason || "Page crossed out"}`
                 : `OCR confidence: ${Math.round((page.ocr_confidence ?? 0) * 100)}% · ${page.callouts.length} callouts · ${page.general_notes.length} notes`
               }
             </p>
@@ -327,11 +327,11 @@ function PageResultCard({ page }: { page: ConstructionPageResult }) {
 function ExtractionDetail({ id }: { id: number }) {
   const { data, isLoading } = useGetPdfExtraction(id, {
     query: {
-      refetchInterval: (q) => {
+      refetchInterval: (q: any) => {
         const status = (q.state.data as PdfExtractionDetail | undefined)?.status;
         return status === "processing" ? 3000 : false;
       },
-    },
+    } as any,
   });
 
   if (isLoading) {
@@ -399,7 +399,7 @@ function ExtractionsList({
   onSelect: (id: number) => void;
 }) {
   const { data, isLoading } = useListPdfExtractions({
-    query: { refetchInterval: 5000 },
+    query: { refetchInterval: 5000 } as any,
   });
   const items: PdfExtractionSummary[] = data?.extractions ?? [];
 

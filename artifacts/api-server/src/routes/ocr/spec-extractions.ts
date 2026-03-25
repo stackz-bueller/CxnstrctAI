@@ -104,7 +104,7 @@ router.post("/upload", upload.single("file"), async (req, res) => {
           status: "completed",
           totalPages: result.total_pages,
           projectName: result.project_name || null,
-          sections: result.sections,
+          sections: result.sections as any,
           processingTimeMs: result.processing_time_ms,
           updatedAt: new Date(),
         })

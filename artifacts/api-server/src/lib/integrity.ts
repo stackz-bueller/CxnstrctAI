@@ -167,7 +167,7 @@ export async function repairIncompleteExtraction(extractionId: number): Promise<
         await db
           .update(constructionExtractionsTable)
           .set({
-            pages: allPages,
+            pages: allPages as any,
             processedPages: pagesMap.size,
             totalPages,
             updatedAt: new Date(),
@@ -218,7 +218,7 @@ export async function repairIncompleteExtraction(extractionId: number): Promise<
       .update(constructionExtractionsTable)
       .set({
         status: finalStatus,
-        pages: finalPages,
+        pages: finalPages as any,
         processedPages: finalPages.length,
         totalPages,
         processingTimeMs,

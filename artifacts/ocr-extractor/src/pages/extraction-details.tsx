@@ -24,7 +24,7 @@ export default function ExtractionDetailsPage() {
   const [activeTab, setActiveTab] = useState<"structured" | "raw">("structured");
   
   const { data: extraction, isLoading, isError } = useGetExtraction(id);
-  const { data: rawTextData } = useGetExtractionRawText(id, { query: { enabled: activeTab === "raw" } });
+  const { data: rawTextData } = useGetExtractionRawText(id, { query: { enabled: activeTab === "raw" } as any });
 
   if (isLoading) {
     return (
@@ -145,7 +145,7 @@ export default function ExtractionDetailsPage() {
                     <div className="w-full sm:w-1/3 shrink-0">
                       <div className="font-medium text-sm text-foreground flex items-center gap-2">
                         {field.label}
-                        {!field.present && <Info className="size-3 text-destructive" title="Field not found in document" />}
+                        {!field.present && <Info className="size-3 text-destructive" />}
                       </div>
                       <div className="font-mono text-[10px] text-muted-foreground mt-0.5">{field.name}</div>
                     </div>

@@ -429,14 +429,14 @@ export default function FinancialExtractPage() {
   }, []);
 
   // Fetch detail
-  const fetchDetail = useCallback(async (id: number) => {
+  const fetchDetail = useCallback(async (id: number): Promise<Extraction | undefined> => {
     try {
       const res = await fetch(`${API_BASE}/api/financial-extractions/${id}`);
-      if (!res.ok) return;
+      if (!res.ok) return undefined;
       const data = await res.json();
       setDetail(data);
       return data as Extraction;
-    } catch { /* ignore */ }
+    } catch { return undefined; }
   }, []);
 
   // Initial load

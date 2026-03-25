@@ -96,6 +96,18 @@ The frontend is branded as **ConstructAI** and focuses on the AI assistant exper
 
 A comprehensive set of RESTful API endpoints for managing schemas, extractions (OCR, PDF, spec), projects, project documents, and the RAG chat functionality.
 
+## CI/CD
+
+-   **GitHub Actions Pipeline** (`.github/workflows/ci.yml`): Runs on every push to `main` and all PRs. All jobs are **blocking** (safety-critical):
+    -   **TypeScript Check**: Typechecks API server and frontend — fails the pipeline on any TS error.
+    -   **Build**: Builds API server (esbuild) and frontend (Vite). Verifies build artifacts exist. Frontend build requires `PORT` and `BASE_PATH` env vars.
+    -   **Schema Validation**: Runs `tsc` on the DB schema and verifies all 7 required tables are exported by name.
+    -   **File Integrity**: Confirms all critical source files exist and Python scripts compile.
+    -   **CI Summary**: Aggregates results and fails if any job fails.
+-   **Local Validation Script** (`scripts/ci/validate.sh`): Run via `pnpm validate`. All 18 checks are enforcing:
+    -   TypeScript (blocking), builds (blocking), database schema sync (requires `DATABASE_URL` unless `SKIP_DB_CHECKS=1`), data integrity (null embeddings, incomplete extractions), required files, Python deps, ONNX model.
+-   **TypeScript Status**: 0 errors across API server and frontend. Libraries use `skipLibCheck` for upstream type compatibility.
+
 # External Dependencies
 
 -   **AI (General)**: OpenAI via Replit AI Integrations (GPT-5.2 Vision).
