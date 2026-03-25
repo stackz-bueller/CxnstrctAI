@@ -1,6 +1,8 @@
 import * as oidc from "openid-client";
 import { type Request, type Response, type NextFunction } from "express";
 import type { AuthUser } from "@workspace/api-zod";
+import { db, usersTable } from "@workspace/db";
+import { eq } from "drizzle-orm";
 import {
   clearSession,
   getOidcConfig,
@@ -84,6 +86,13 @@ export async function authMiddleware(
     return;
   }
 
-  req.user = refreshed.user;
+  const sessionUser = refreshed.user;
+  try {
+    const [dbUser] = await db.select({ role: usersTable.role }).from(usersTable).where(eq(usersTable.id, sessionUser.id));
+    if (dbUser) {
+      sessionUser.role = dbUser.role as "user" | "superuser";
+    }
+  } catch { /* fall back to session role */ }
+  req.user = sessionUser;
   next();
 }
