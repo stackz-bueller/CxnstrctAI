@@ -297,12 +297,14 @@ export default function ProjectDetailPage() {
     if (!files || files.length === 0) return;
     setUploading(true);
 
-    type UploadedDoc = { id: number; pipeline: string; fileName: string };
+    type UploadedDoc = { id: number; pipeline: string; fileName: string; fileSize: number };
     const uploaded: UploadedDoc[] = [];
 
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      setUploadProgress(`Uploading ${file.name} (${i + 1}/${files.length})…`);
+    const sortedFiles = Array.from(files).sort((a, b) => a.size - b.size);
+
+    for (let i = 0; i < sortedFiles.length; i++) {
+      const file = sortedFiles[i];
+      setUploadProgress(`Uploading ${file.name} (${i + 1}/${sortedFiles.length})…`);
 
       try {
         const formData = new FormData();
@@ -351,7 +353,7 @@ export default function ProjectDetailPage() {
           continue;
         }
 
-        uploaded.push({ id: result.id, pipeline: result.pipeline, fileName: file.name });
+        uploaded.push({ id: result.id, pipeline: result.pipeline, fileName: file.name, fileSize: file.size });
       } catch (e) {
         alert(`Error uploading ${file.name}: ${e instanceof Error ? e.message : "Unknown error"}`);
       }
