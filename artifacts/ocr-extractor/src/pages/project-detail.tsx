@@ -300,62 +300,61 @@ export default function ProjectDetailPage() {
     if (!files || files.length === 0) return;
     setUploading(true);
 
-    const sortedFiles = Array.from(files).sort((a, b) => a.size - b.size);
+    const fileArray = Array.from(files);
+    const total = fileArray.length;
+    let completed = 0;
+    setUploadProgress(`Uploading ${total} file${total > 1 ? "s" : ""}…`);
 
-    for (let i = 0; i < sortedFiles.length; i++) {
-      const file = sortedFiles[i];
-      setUploadProgress(`Uploading ${file.name} (${i + 1}/${sortedFiles.length})…`);
+    async function uploadSingle(file: File) {
+      const formData = new FormData();
+      formData.append("file", file);
 
-      try {
-        const formData = new FormData();
-        formData.append("file", file);
+      const uploadRes = await fetch(`${API_BASE}/api/smart-upload`, {
+        method: "POST",
+        body: formData,
+      });
 
-        const uploadRes = await fetch(`${API_BASE}/api/smart-upload`, {
-          method: "POST",
-          body: formData,
-        });
-
-        if (!uploadRes.ok) {
-          const errData = await uploadRes.json().catch(() => ({}));
-          alert(`Failed to upload ${file.name}: ${(errData as { error?: string }).error || uploadRes.statusText}`);
-          continue;
-        }
-
-        const result = await uploadRes.json() as {
-          detectedType: string;
-          pipeline: string;
-          id: number | null;
-        };
-
-        if (!result.id) {
-          alert(`${file.name}: Detected as ${result.detectedType} but no extraction was created. Try uploading as a specific type.`);
-          continue;
-        }
-
-        const typeMap: Record<string, string> = {
-          "pdf-extractions": "construction",
-          "spec-extractions": "spec",
-          "financial-extractions": "financial",
-        };
-        const docType = typeMap[result.pipeline] || "ocr";
-
-        setUploadProgress(`Adding ${file.name} to project…`);
-
-        const addRes = await fetch(`${API_BASE}/api/projects/${projectId}/documents`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ documentType: docType, documentId: result.id }),
-        });
-
-        if (!addRes.ok) {
-          const errData = await addRes.json().catch(() => ({}));
-          alert(`Failed to add ${file.name} to project: ${(errData as { error?: string }).error || addRes.statusText}`);
-          continue;
-        }
-
-      } catch (e) {
-        alert(`Error uploading ${file.name}: ${e instanceof Error ? e.message : "Unknown error"}`);
+      if (!uploadRes.ok) {
+        const errData = await uploadRes.json().catch(() => ({}));
+        throw new Error(`${file.name}: ${(errData as { error?: string }).error || uploadRes.statusText}`);
       }
+
+      const result = await uploadRes.json() as {
+        detectedType: string;
+        pipeline: string;
+        id: number | null;
+      };
+
+      if (!result.id) {
+        throw new Error(`${file.name}: Detected as ${result.detectedType} but no extraction was created`);
+      }
+
+      const typeMap: Record<string, string> = {
+        "pdf-extractions": "construction",
+        "spec-extractions": "spec",
+        "financial-extractions": "financial",
+      };
+      const docType = typeMap[result.pipeline] || "ocr";
+
+      const addRes = await fetch(`${API_BASE}/api/projects/${projectId}/documents`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ documentType: docType, documentId: result.id }),
+      });
+
+      if (!addRes.ok) {
+        const errData = await addRes.json().catch(() => ({}));
+        throw new Error(`${file.name}: ${(errData as { error?: string }).error || addRes.statusText}`);
+      }
+
+      completed++;
+      setUploadProgress(`Uploaded ${completed}/${total} file${total > 1 ? "s" : ""}…`);
+    }
+
+    const results = await Promise.allSettled(fileArray.map((f) => uploadSingle(f)));
+    const errors = results.filter((r): r is PromiseRejectedResult => r.status === "rejected");
+    if (errors.length > 0) {
+      alert(errors.map((e) => e.reason?.message ?? "Unknown error").join("\n"));
     }
 
     await fetchProject();

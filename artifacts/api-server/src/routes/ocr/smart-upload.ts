@@ -98,18 +98,12 @@ router.post("/", upload.single("file"), async (req, res) => {
   const persistPath = path.join(assetsDir, sanitizedName);
   fs.writeFileSync(persistPath, file.buffer);
 
-  const tmpDetectPath = path.join(os.tmpdir(), `detect_${Date.now()}_${sanitizedName}`);
-  fs.writeFileSync(tmpDetectPath, file.buffer);
-
   let detection: DetectResult;
   try {
-    detection = await detectPdf(tmpDetectPath);
+    detection = await detectPdf(persistPath);
   } catch (err) {
-    try { fs.unlinkSync(tmpDetectPath); } catch { /* ignore */ }
     res.status(500).json({ error: err instanceof Error ? err.message : "Detection failed" });
     return;
-  } finally {
-    try { fs.unlinkSync(tmpDetectPath); } catch { /* ignore */ }
   }
 
   const pageSize = detection.page_width_pts && detection.page_height_pts
