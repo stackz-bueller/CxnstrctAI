@@ -155,6 +155,7 @@ export default function ProjectDetailPage() {
   const [expandedSources, setExpandedSources] = useState<Set<number>>(new Set());
 
   const [pollingActive, setPollingActive] = useState(false);
+  const [reprocessing, setReprocessing] = useState(false);
 
   const [browsingDocId, setBrowsingDocId] = useState<number | null>(null);
   const [browsingDocName, setBrowsingDocName] = useState("");
@@ -270,6 +271,21 @@ export default function ProjectDetailPage() {
       alert("Failed to remove document");
     } finally {
       setRemovingDocId(null);
+    }
+  }
+
+  async function reprocessAllDocuments() {
+    if (!confirm("This will re-run ALL documents through the updated processing pipeline. Existing extraction data will be replaced with fresh results. This may take a while for large document sets. Continue?")) return;
+    setReprocessing(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/projects/${projectId}/reprocess`, { method: "POST" });
+      if (!res.ok) throw new Error("Failed to start reprocessing");
+      setPollingActive(true);
+      await fetchProject();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Failed to reprocess documents");
+    } finally {
+      setReprocessing(false);
     }
   }
 
@@ -564,13 +580,26 @@ export default function ProjectDetailPage() {
                 <FileText className="size-4 text-muted-foreground" />
                 Project Documents
               </h2>
-              <button
-                onClick={() => { setShowAddDoc((v) => !v); if (!showAddDoc) loadAvailableDocs(); }}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary/10 text-primary hover:bg-primary/20 transition-colors text-xs font-medium"
-              >
-                <Plus className="size-3.5" />
-                Add
-              </button>
+              <div className="flex items-center gap-2">
+                {project.documents.length > 0 && (
+                  <button
+                    onClick={reprocessAllDocuments}
+                    disabled={reprocessing}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500/10 text-amber-600 hover:bg-amber-500/20 transition-colors text-xs font-medium disabled:opacity-50"
+                    title="Re-run all documents through the updated processing pipeline"
+                  >
+                    {reprocessing ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
+                    Reprocess
+                  </button>
+                )}
+                <button
+                  onClick={() => { setShowAddDoc((v) => !v); if (!showAddDoc) loadAvailableDocs(); }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary/10 text-primary hover:bg-primary/20 transition-colors text-xs font-medium"
+                >
+                  <Plus className="size-3.5" />
+                  Add
+                </button>
+              </div>
             </div>
 
             <AnimatePresence>

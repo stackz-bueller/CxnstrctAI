@@ -59,12 +59,17 @@ router.post("/upload", upload.single("file"), async (req, res) => {
   const file = req.file;
   if (!file) { res.status(400).json({ error: "No PDF uploaded" }); return; }
 
-  const tmpPath = path.join(os.tmpdir(), `fin_${Date.now()}_${file.originalname.replace(/[^a-zA-Z0-9._-]/g, "_")}`);
+  const sanitizedName = file.originalname.replace(/[^a-zA-Z0-9._-]/g, "_");
+  const assetsDir = path.resolve(process.cwd(), "../../attached_assets");
+  if (!fs.existsSync(assetsDir)) fs.mkdirSync(assetsDir, { recursive: true });
+  fs.writeFileSync(path.join(assetsDir, sanitizedName), file.buffer);
+
+  const tmpPath = path.join(os.tmpdir(), `fin_${Date.now()}_${sanitizedName}`);
   fs.writeFileSync(tmpPath, file.buffer);
 
   const [record] = await db
     .insert(financialExtractionsTable)
-    .values({ fileName: file.originalname, status: "processing", totalPages: 0, documents: [], processingTimeMs: 0 })
+    .values({ fileName: sanitizedName, status: "processing", totalPages: 0, documents: [], processingTimeMs: 0 })
     .returning();
 
   res.json(fmt(record));
@@ -92,6 +97,64 @@ router.post("/upload", upload.single("file"), async (req, res) => {
       }).where(eq(financialExtractionsTable.id, record.id));
     } finally {
       try { fs.unlinkSync(tmpPath); } catch { /* ignore */ }
+    }
+  })();
+});
+
+router.post("/:id/reprocess", async (req, res) => {
+  const id = parseInt(req.params.id as string);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+
+  const [row] = await db
+    .select()
+    .from(financialExtractionsTable)
+    .where(eq(financialExtractionsTable.id, id));
+
+  if (!row) { res.status(404).json({ error: "Financial extraction not found" }); return; }
+
+  if (row.status === "processing") {
+    res.json({ status: "already_processing", extractionId: id });
+    return;
+  }
+
+  const assetsDir = path.resolve(process.cwd(), "../../attached_assets");
+  const pdfPath = path.join(assetsDir, row.fileName);
+
+  if (!fs.existsSync(pdfPath)) {
+    res.status(404).json({ error: `PDF not found on disk: ${row.fileName}` });
+    return;
+  }
+
+  await db
+    .update(financialExtractionsTable)
+    .set({ status: "processing", documents: [], processingTimeMs: 0, errorMessage: null, updatedAt: new Date() })
+    .where(eq(financialExtractionsTable.id, id));
+
+  res.json({ status: "reprocessing_started", extractionId: id, file: row.fileName });
+
+  void (async () => {
+    const aiBaseUrl = process.env["AI_INTEGRATIONS_OPENAI_BASE_URL"] ?? "";
+    const aiApiKey = process.env["AI_INTEGRATIONS_OPENAI_API_KEY"] ?? "";
+    const scriptPath = path.resolve(process.cwd(), "../../scripts/financial_processor.py");
+    try {
+      req.log.info({ extractionId: id, pdfPath }, "Reprocessing financial PDF");
+      const result = await runScript(scriptPath, [pdfPath, aiBaseUrl, aiApiKey]);
+      await db.update(financialExtractionsTable).set({
+        status: "completed",
+        totalPages: result.total_pages as number,
+        detectedType: result.detected_type as string,
+        documents: result.documents as never[],
+        processingTimeMs: result.processing_time_ms as number,
+        updatedAt: new Date(),
+      }).where(eq(financialExtractionsTable.id, id));
+      req.log.info({ extractionId: id }, "Financial reprocessing complete");
+    } catch (err) {
+      req.log.error({ err }, "Financial reprocessing failed");
+      await db.update(financialExtractionsTable).set({
+        status: "failed",
+        errorMessage: err instanceof Error ? err.message : "Unknown",
+        updatedAt: new Date(),
+      }).where(eq(financialExtractionsTable.id, id));
     }
   })();
 });

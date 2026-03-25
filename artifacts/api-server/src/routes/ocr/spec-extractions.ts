@@ -71,16 +71,19 @@ router.post("/upload", upload.single("file"), async (req, res) => {
     return;
   }
 
-  const tmpPath = path.join(
-    os.tmpdir(),
-    `spec_${Date.now()}_${file.originalname.replace(/[^a-zA-Z0-9._-]/g, "_")}`
-  );
+  const sanitizedName = file.originalname.replace(/[^a-zA-Z0-9._-]/g, "_");
+  const assetsDir = path.resolve(process.cwd(), "../../attached_assets");
+  if (!fs.existsSync(assetsDir)) fs.mkdirSync(assetsDir, { recursive: true });
+  const persistPath = path.join(assetsDir, sanitizedName);
+  fs.writeFileSync(persistPath, file.buffer);
+
+  const tmpPath = path.join(os.tmpdir(), `spec_${Date.now()}_${sanitizedName}`);
   fs.writeFileSync(tmpPath, file.buffer);
 
   const [extraction] = await db
     .insert(specExtractionsTable)
     .values({
-      fileName: file.originalname,
+      fileName: sanitizedName,
       status: "processing",
       totalPages: 0,
       sections: [],
@@ -118,6 +121,71 @@ router.post("/upload", upload.single("file"), async (req, res) => {
         .where(eq(specExtractionsTable.id, extraction.id));
     } finally {
       try { fs.unlinkSync(tmpPath); } catch { /* ignore */ }
+    }
+  })();
+});
+
+router.post("/:id/reprocess", async (req, res) => {
+  const id = parseInt(req.params.id as string);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+
+  const [row] = await db
+    .select()
+    .from(specExtractionsTable)
+    .where(eq(specExtractionsTable.id, id));
+
+  if (!row) { res.status(404).json({ error: "Spec extraction not found" }); return; }
+
+  if (row.status === "processing") {
+    res.json({ status: "already_processing", extractionId: id });
+    return;
+  }
+
+  const assetsDir = path.resolve(process.cwd(), "../../attached_assets");
+  const pdfPath = path.join(assetsDir, row.fileName);
+
+  if (!fs.existsSync(pdfPath)) {
+    res.status(404).json({ error: `PDF not found on disk: ${row.fileName}` });
+    return;
+  }
+
+  await db
+    .update(specExtractionsTable)
+    .set({ status: "processing", sections: [], processingTimeMs: 0, errorMessage: null, updatedAt: new Date() })
+    .where(eq(specExtractionsTable.id, id));
+
+  res.json({ status: "reprocessing_started", extractionId: id, file: row.fileName });
+
+  (async () => {
+    try {
+      const aiBaseUrl = process.env["AI_INTEGRATIONS_OPENAI_BASE_URL"] ?? "";
+      const aiApiKey = process.env["AI_INTEGRATIONS_OPENAI_API_KEY"] ?? "";
+      const scriptPath = path.resolve(process.cwd(), "../../scripts/spec_processor.py");
+
+      req.log.info({ extractionId: id, pdfPath }, "Reprocessing spec PDF");
+
+      const result = await runSpecPipeline(scriptPath, pdfPath, aiBaseUrl, aiApiKey);
+
+      await db
+        .update(specExtractionsTable)
+        .set({
+          status: "completed",
+          totalPages: result.total_pages,
+          projectName: result.project_name || null,
+          sections: result.sections as any,
+          processingTimeMs: result.processing_time_ms,
+          updatedAt: new Date(),
+        })
+        .where(eq(specExtractionsTable.id, id));
+
+      req.log.info({ extractionId: id, sections: result.sections.length }, "Spec reprocessing complete");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      req.log.error({ err }, "Spec reprocessing failed");
+      await db
+        .update(specExtractionsTable)
+        .set({ status: "failed", errorMessage: msg, updatedAt: new Date() })
+        .where(eq(specExtractionsTable.id, id));
     }
   })();
 });

@@ -87,10 +87,13 @@ router.post("/", upload.single("file"), async (req, res) => {
     return;
   }
 
-  const tmpPath = path.join(
-    os.tmpdir(),
-    `smart_${Date.now()}_${file.originalname.replace(/[^a-zA-Z0-9._-]/g, "_")}`
-  );
+  const sanitizedName = file.originalname.replace(/[^a-zA-Z0-9._-]/g, "_");
+  const assetsDir = path.resolve(process.cwd(), "../../attached_assets");
+  if (!fs.existsSync(assetsDir)) fs.mkdirSync(assetsDir, { recursive: true });
+  const persistPath = path.join(assetsDir, sanitizedName);
+  fs.writeFileSync(persistPath, file.buffer);
+
+  const tmpPath = path.join(os.tmpdir(), `smart_${Date.now()}_${sanitizedName}`);
   fs.writeFileSync(tmpPath, file.buffer);
 
   let detection: DetectResult;
@@ -115,7 +118,7 @@ router.post("/", upload.single("file"), async (req, res) => {
   if (isFinancial) {
     const [record] = await db
       .insert(financialExtractionsTable)
-      .values({ fileName: file.originalname, status: "processing", totalPages: 0, documents: [], processingTimeMs: 0 })
+      .values({ fileName: sanitizedName, status: "processing", totalPages: 0, documents: [], processingTimeMs: 0 })
       .returning();
 
     res.json({
@@ -150,7 +153,7 @@ router.post("/", upload.single("file"), async (req, res) => {
   } else if (isSpec) {
     const [record] = await db
       .insert(specExtractionsTable)
-      .values({ fileName: file.originalname, status: "processing", totalPages: 0, sections: [], processingTimeMs: 0 })
+      .values({ fileName: sanitizedName, status: "processing", totalPages: 0, sections: [], processingTimeMs: 0 })
       .returning();
 
     res.json({ detectedType: detection.type, pipeline: "spec-extractions", id: record.id, reason: detection.reason, pages: detection.total_pages, pageSize, avgWordsPerPage: detection.avg_words_per_page });
@@ -177,7 +180,7 @@ router.post("/", upload.single("file"), async (req, res) => {
   } else {
     const [record] = await db
       .insert(constructionExtractionsTable)
-      .values({ fileName: file.originalname, status: "processing", totalPages: 0, pages: [], processingTimeMs: 0 })
+      .values({ fileName: sanitizedName, status: "processing", totalPages: 0, pages: [], processingTimeMs: 0 })
       .returning();
 
     res.json({ detectedType: detection.type, pipeline: "pdf-extractions", id: record.id, reason: detection.reason, pages: detection.total_pages, pageSize, avgWordsPerPage: detection.avg_words_per_page });

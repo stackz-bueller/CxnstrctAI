@@ -1,4 +1,6 @@
 import { Router, type IRouter } from "express";
+import path from "path";
+import fs from "fs";
 import { db } from "@workspace/db";
 import {
   projectsTable,
@@ -172,6 +174,193 @@ router.delete("/:id", requireAuth, async (req, res) => {
   } catch (err) {
     req.log.error({ err }, "Failed to delete project");
     res.status(500).json({ error: "Failed to delete project" });
+  }
+});
+
+// ─── Project Reprocess All Documents ──────────────────────────────────────────
+
+router.post("/:id/reprocess", requireAuth, async (req, res) => {
+  const projectId = parseInt(req.params.id as string);
+  if (isNaN(projectId)) { res.status(400).json({ error: "Invalid id" }); return; }
+
+  try {
+    const documents = await db
+      .select()
+      .from(projectDocumentsTable)
+      .where(eq(projectDocumentsTable.projectId, projectId));
+
+    if (documents.length === 0) {
+      res.json({ status: "no_documents", message: "No documents to reprocess" });
+      return;
+    }
+
+    const assetsDir = path.resolve(process.cwd(), "../../attached_assets");
+    const results: Array<{ documentId: number; documentType: string; documentName: string; status: string }> = [];
+
+    for (const doc of documents) {
+      if (doc.documentType === "ocr") {
+        results.push({ documentId: doc.documentId, documentType: doc.documentType, documentName: doc.documentName, status: "skipped_unsupported_type" });
+        continue;
+      }
+
+      let fileName = "";
+      if (doc.documentType === "construction") {
+        const [row] = await db.select({ fileName: constructionExtractionsTable.fileName, status: constructionExtractionsTable.status }).from(constructionExtractionsTable).where(eq(constructionExtractionsTable.id, doc.documentId));
+        if (!row) { results.push({ documentId: doc.documentId, documentType: doc.documentType, documentName: doc.documentName, status: "extraction_not_found" }); continue; }
+        if (row.status === "processing") { results.push({ documentId: doc.documentId, documentType: doc.documentType, documentName: doc.documentName, status: "already_processing" }); continue; }
+        fileName = row.fileName;
+      } else if (doc.documentType === "spec") {
+        const [row] = await db.select({ fileName: specExtractionsTable.fileName, status: specExtractionsTable.status }).from(specExtractionsTable).where(eq(specExtractionsTable.id, doc.documentId));
+        if (!row) { results.push({ documentId: doc.documentId, documentType: doc.documentType, documentName: doc.documentName, status: "extraction_not_found" }); continue; }
+        if (row.status === "processing") { results.push({ documentId: doc.documentId, documentType: doc.documentType, documentName: doc.documentName, status: "already_processing" }); continue; }
+        fileName = row.fileName;
+      } else if (doc.documentType === "financial") {
+        const [row] = await db.select({ fileName: financialExtractionsTable.fileName, status: financialExtractionsTable.status }).from(financialExtractionsTable).where(eq(financialExtractionsTable.id, doc.documentId));
+        if (!row) { results.push({ documentId: doc.documentId, documentType: doc.documentType, documentName: doc.documentName, status: "extraction_not_found" }); continue; }
+        if (row.status === "processing") { results.push({ documentId: doc.documentId, documentType: doc.documentType, documentName: doc.documentName, status: "already_processing" }); continue; }
+        fileName = row.fileName;
+      }
+
+      const pdfPath = path.join(assetsDir, fileName);
+      if (!fs.existsSync(pdfPath)) {
+        results.push({ documentId: doc.documentId, documentType: doc.documentType, documentName: doc.documentName, status: "file_not_found" });
+        continue;
+      }
+
+      const aiBaseUrl = process.env["AI_INTEGRATIONS_OPENAI_BASE_URL"] ?? "";
+      const aiApiKey = process.env["AI_INTEGRATIONS_OPENAI_API_KEY"] ?? "";
+
+      if (doc.documentType === "construction") {
+        await db.update(constructionExtractionsTable).set({ status: "processing", pages: [], processedPages: 0, processingTimeMs: 0, errorMessage: null, updatedAt: new Date() }).where(eq(constructionExtractionsTable.id, doc.documentId));
+
+        const extractionId = doc.documentId;
+        void (async () => {
+          try {
+            const scriptPath = path.resolve(process.cwd(), "../../scripts/pdf_processor.py");
+            const { spawn: spawnProc } = await import("child_process");
+            const { constructionPageResultSchema } = await import("@workspace/db/schema");
+
+            const pagesMap = new Map<number, unknown>();
+            let totalPages = 0;
+            let processingTimeMs = 0;
+
+            await new Promise<void>((resolve, reject) => {
+              const proc = spawnProc("python3", [scriptPath, pdfPath, aiBaseUrl, aiApiKey, "1", "99999", "--stream"], { timeout: 4 * 60 * 60 * 1000 });
+              let lineBuffer = "";
+
+              proc.stdout.on("data", (chunk: Buffer) => {
+                lineBuffer += chunk.toString();
+                const lines = lineBuffer.split("\n");
+                lineBuffer = lines.pop() ?? "";
+                for (const line of lines) {
+                  const trimmed = line.trim();
+                  if (!trimmed) continue;
+                  try {
+                    const msg = JSON.parse(trimmed);
+                    if (msg.type === "page") {
+                      totalPages = msg.total_pages;
+                      const pg = msg.page as { page_number: number };
+                      pagesMap.set(pg.page_number, pg);
+                      const allPages = Array.from(pagesMap.values()).sort((a, b) => (a as { page_number: number }).page_number - (b as { page_number: number }).page_number);
+                      db.update(constructionExtractionsTable).set({ pages: allPages as any, processedPages: pagesMap.size, totalPages, updatedAt: new Date() }).where(eq(constructionExtractionsTable.id, extractionId)).catch(() => {});
+                    } else if (msg.type === "done") {
+                      totalPages = msg.total_pages;
+                      processingTimeMs = msg.processing_time_ms;
+                    }
+                  } catch { }
+                }
+              });
+              proc.stderr.on("data", () => {});
+              proc.on("close", (code, signal) => { if (code !== 0 || signal) reject(new Error(`exit ${code}`)); else resolve(); });
+              proc.on("error", reject);
+            });
+
+            const finalPages = Array.from(pagesMap.values()).sort((a, b) => (a as { page_number: number }).page_number - (b as { page_number: number }).page_number);
+            await db.update(constructionExtractionsTable).set({ status: finalPages.length >= totalPages ? "completed" : "partial", pages: finalPages as any, processedPages: finalPages.length, totalPages, processingTimeMs, updatedAt: new Date() }).where(eq(constructionExtractionsTable.id, extractionId));
+
+            const linkedDocs = await db.select().from(projectDocumentsTable).where(eq(projectDocumentsTable.documentId, extractionId));
+            for (const ld of linkedDocs) {
+              if (ld.documentType !== "construction") continue;
+              try { await indexProjectDocument(ld.projectId, ld.id, ld.documentType, ld.documentId); } catch { }
+            }
+          } catch (err) {
+            req.log.error({ err, extractionId }, "Project reprocess construction failed");
+            await db.update(constructionExtractionsTable).set({ status: "partial", errorMessage: (err instanceof Error ? err.message : "Unknown").slice(0, 500), updatedAt: new Date() }).where(eq(constructionExtractionsTable.id, extractionId));
+          }
+        })();
+      } else if (doc.documentType === "spec") {
+        await db.update(specExtractionsTable).set({ status: "processing", sections: [], processingTimeMs: 0, errorMessage: null, updatedAt: new Date() }).where(eq(specExtractionsTable.id, doc.documentId));
+
+        const extractionId = doc.documentId;
+        void (async () => {
+          try {
+            const scriptPath = path.resolve(process.cwd(), "../../scripts/spec_processor.py");
+            const { spawn: spawnProc } = await import("child_process");
+            const result = await new Promise<Record<string, unknown>>((resolve, reject) => {
+              const proc = spawnProc("python3", [scriptPath, pdfPath, aiBaseUrl, aiApiKey], { timeout: 4 * 60 * 60 * 1000 });
+              let stdout = "";
+              proc.stdout.on("data", (c: Buffer) => { stdout += c.toString(); });
+              proc.stderr.on("data", () => {});
+              proc.on("close", (code) => { if (code !== 0) reject(new Error(`exit ${code}`)); else { try { resolve(JSON.parse(stdout)); } catch { reject(new Error("parse")); } } });
+              proc.on("error", reject);
+            });
+            await db.update(specExtractionsTable).set({ status: "completed", totalPages: result.total_pages as number, projectName: (result.project_name as string) || null, sections: result.sections as any, processingTimeMs: result.processing_time_ms as number, updatedAt: new Date() }).where(eq(specExtractionsTable.id, extractionId));
+            const linkedDocs = await db.select().from(projectDocumentsTable).where(eq(projectDocumentsTable.documentId, extractionId));
+            for (const ld of linkedDocs) {
+              if (ld.documentType !== "spec") continue;
+              try { await indexProjectDocument(ld.projectId, ld.id, ld.documentType, ld.documentId); } catch { }
+            }
+          } catch (err) {
+            req.log.error({ err, extractionId }, "Project reprocess spec failed");
+            await db.update(specExtractionsTable).set({ status: "failed", errorMessage: err instanceof Error ? err.message : "Unknown", updatedAt: new Date() }).where(eq(specExtractionsTable.id, extractionId));
+          }
+        })();
+      } else if (doc.documentType === "financial") {
+        await db.update(financialExtractionsTable).set({ status: "processing", documents: [], processingTimeMs: 0, errorMessage: null, updatedAt: new Date() }).where(eq(financialExtractionsTable.id, doc.documentId));
+
+        const extractionId = doc.documentId;
+        void (async () => {
+          try {
+            const scriptPath = path.resolve(process.cwd(), "../../scripts/financial_processor.py");
+            const { spawn: spawnProc } = await import("child_process");
+            const result = await new Promise<Record<string, unknown>>((resolve, reject) => {
+              const proc = spawnProc("python3", [scriptPath, pdfPath, aiBaseUrl, aiApiKey], { timeout: 4 * 60 * 60 * 1000 });
+              let stdout = "";
+              proc.stdout.on("data", (c: Buffer) => { stdout += c.toString(); });
+              proc.stderr.on("data", () => {});
+              proc.on("close", (code) => { if (code !== 0) reject(new Error(`exit ${code}`)); else { try { resolve(JSON.parse(stdout)); } catch { reject(new Error("parse")); } } });
+              proc.on("error", reject);
+            });
+            await db.update(financialExtractionsTable).set({ status: "completed", totalPages: result.total_pages as number, detectedType: result.detected_type as string, documents: result.documents as never[], processingTimeMs: result.processing_time_ms as number, updatedAt: new Date() }).where(eq(financialExtractionsTable.id, extractionId));
+            const linkedDocs = await db.select().from(projectDocumentsTable).where(eq(projectDocumentsTable.documentId, extractionId));
+            for (const ld of linkedDocs) {
+              if (ld.documentType !== "financial") continue;
+              try { await indexProjectDocument(ld.projectId, ld.id, ld.documentType, ld.documentId); } catch { }
+            }
+          } catch (err) {
+            req.log.error({ err, extractionId }, "Project reprocess financial failed");
+            await db.update(financialExtractionsTable).set({ status: "failed", errorMessage: err instanceof Error ? err.message : "Unknown", updatedAt: new Date() }).where(eq(financialExtractionsTable.id, extractionId));
+          }
+        })();
+      }
+
+      results.push({ documentId: doc.documentId, documentType: doc.documentType, documentName: doc.documentName, status: "reprocessing_started" });
+    }
+
+    await db
+      .update(projectDocumentsTable)
+      .set({ indexStatus: "pending" })
+      .where(eq(projectDocumentsTable.projectId, projectId));
+
+    res.json({
+      status: "reprocessing_started",
+      projectId,
+      documentsTriggered: results.filter(r => r.status === "reprocessing_started").length,
+      results,
+    });
+  } catch (err) {
+    req.log.error({ err }, "Failed to reprocess project documents");
+    res.status(500).json({ error: "Failed to reprocess project documents" });
   }
 });
 

@@ -303,7 +303,7 @@ function runPythonPipeline(
 }
 
 router.post("/:id/reprocess", async (req, res) => {
-  const id = parseInt(req.params.id);
+  const id = parseInt(req.params.id as string);
   if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
 
   const [row] = await db
@@ -313,6 +313,11 @@ router.post("/:id/reprocess", async (req, res) => {
 
   if (!row) { res.status(404).json({ error: "Extraction not found" }); return; }
 
+  if (row.status === "processing") {
+    res.json({ status: "already_processing", extractionId: id });
+    return;
+  }
+
   const assetsDir = path.resolve(process.cwd(), "../../attached_assets");
   const pdfPath = path.join(assetsDir, row.fileName);
 
@@ -321,25 +326,39 @@ router.post("/:id/reprocess", async (req, res) => {
     return;
   }
 
-  // Determine resume point: find highest page_number already in DB
-  const existingPages = (row.pages as Array<{ page_number: number }>) ?? [];
-  const maxProcessed = existingPages.length > 0
-    ? Math.max(...existingPages.map((p) => p.page_number))
-    : 0;
-  const startPage = maxProcessed + 1;
+  const fullReprocess = req.query.full === "true";
 
-  if (startPage > row.totalPages && row.totalPages > 0) {
-    res.json({ status: "already_complete", pages: existingPages.length, totalPages: row.totalPages });
-    return;
+  let existingPages: Array<{ page_number: number }>;
+  let startPage: number;
+
+  if (fullReprocess) {
+    existingPages = [];
+    startPage = 1;
+  } else {
+    existingPages = (row.pages as Array<{ page_number: number }>) ?? [];
+    const maxProcessed = existingPages.length > 0
+      ? Math.max(...existingPages.map((p) => p.page_number))
+      : 0;
+    startPage = maxProcessed + 1;
+
+    if (startPage > row.totalPages && row.totalPages > 0) {
+      res.json({ status: "already_complete", pages: existingPages.length, totalPages: row.totalPages });
+      return;
+    }
   }
 
   await db
     .update(constructionExtractionsTable)
-    .set({ status: "processing", updatedAt: new Date() })
+    .set({
+      status: "processing",
+      ...(fullReprocess ? { pages: [], processedPages: 0, processingTimeMs: 0, errorMessage: null } : {}),
+      updatedAt: new Date(),
+    })
     .where(eq(constructionExtractionsTable.id, id));
 
   res.json({
     status: "reprocessing_started",
+    mode: fullReprocess ? "full" : "resume",
     extractionId: id,
     file: row.fileName,
     resumingFrom: startPage,
@@ -352,12 +371,11 @@ router.post("/:id/reprocess", async (req, res) => {
       const aiApiKey = process.env["AI_INTEGRATIONS_OPENAI_API_KEY"] ?? "";
       const scriptPath = path.resolve(process.cwd(), "../../scripts/pdf_processor.py");
 
-      req.log.info({ extractionId: id, pdfPath, startPage }, "Reprocessing construction PDF (streaming)");
+      req.log.info({ extractionId: id, pdfPath, startPage, fullReprocess }, "Reprocessing construction PDF (streaming)");
 
-      // Build current pages map keyed by page_number for merging
       const pagesMap = new Map<number, unknown>(existingPages.map((p) => [p.page_number, p]));
-      let totalPages = row.totalPages;
-      let processingTimeMs = row.processingTimeMs;
+      let totalPages = fullReprocess ? 0 : row.totalPages;
+      let processingTimeMs = fullReprocess ? 0 : row.processingTimeMs;
       let pagesSaved = existingPages.length;
 
       await new Promise<void>((resolve, reject) => {
@@ -429,7 +447,6 @@ router.post("/:id/reprocess", async (req, res) => {
         proc.on("error", (err) => reject(new Error(`Failed to spawn Python: ${err.message}`)));
       });
 
-      // Mark complete and re-index
       const finalPages = Array.from(pagesMap.values()).sort(
         (a, b) => (a as { page_number: number }).page_number - (b as { page_number: number }).page_number
       );
@@ -464,7 +481,6 @@ router.post("/:id/reprocess", async (req, res) => {
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Unknown error";
       req.log.error({ err }, "Reprocessing pipeline failed");
-      // Don't overwrite pages already saved — just mark as partial/failed
       await db
         .update(constructionExtractionsTable)
         .set({ status: "partial", errorMessage: msg.slice(0, 500), updatedAt: new Date() })

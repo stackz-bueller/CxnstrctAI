@@ -81,12 +81,24 @@ Provides project-scoped Q&A over indexed documents:
 - **Temp file cleanup**: Orphaned files in OS temp dir cleaned on startup.
 - **Integrity checks**: Incomplete extractions detected and marked on startup.
 
+## Document Reprocessing
+- **Per-extraction reprocess**: `POST /api/pdf-extractions/:id/reprocess?full=true`, `POST /api/spec-extractions/:id/reprocess`, `POST /api/financial-extractions/:id/reprocess`. Clears old results and re-runs the full pipeline from the persisted PDF in `attached_assets/`.
+- **Project-level reprocess**: `POST /api/projects/:id/reprocess` triggers reprocessing of all linked documents and re-indexes them afterward.
+- **File persistence**: All upload routes (direct and smart-upload) now persist PDFs to `attached_assets/` with sanitized filenames, enabling reliable reprocessing.
+- **Frontend button**: "Reprocess" button in the Documents tab of each project, with confirmation dialog and live progress polling.
+
+## Admin Panel
+- **Route**: `/admin` (superuser-only, shown in both mobile header and desktop sidebar).
+- **Users tab**: Lists all registered users with role badges, allows superusers to promote/demote roles.
+- **Cost Monitor tab**: Total spend, API call counts, token usage, per-category breakdown, and daily cost chart.
+- **API**: `GET /api/admin/users`, `PATCH /api/admin/users/:userId/role` (superuser-only).
+
 ## UI/UX
 Branded as **ConstructAI**, the frontend focuses on the AI assistant. Document processing features are backend-only. The UI includes:
 -   **Login gate**: Replit OIDC authentication with branded login screen.
 -   **Projects list**: Create and manage projects.
--   **Project detail**: AI chat with feedback, citations, and document management.
--   **Cost monitoring**: Charts showing spend by category and daily breakdown.
+-   **Project detail**: AI chat with feedback, citations, document management, and reprocessing.
+-   **Admin panel**: User management and cost monitoring (superuser-only).
 -   **User profile**: Avatar, name display, and logout in sidebar.
 
 ## API Endpoints
