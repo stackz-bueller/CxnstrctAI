@@ -35,14 +35,15 @@ The project is organized as a pnpm monorepo using TypeScript 5.9, with a clear s
 
 ### Construction PDF Pipeline
 
--   **Multi-stage processing for engineering documents**:
-    1.  **PDF to Images**: `pdf2image`/Poppler converts PDFs to 300 DPI images.
-    2.  **Image Preprocessing**: OpenCV for noise reduction and text sharpening.
-    3.  **Targeted OCR**: Tesseract OCR applied to specific regions (title block, revision block) and full page.
-    4.  **Legend/Callout Detection**: OpenCV contour analysis.
-    5.  **Full-Page Vision**: GPT-4o Vision for structured extraction, including table capture, with a fast-path for blank pages.
-    6.  **Multi-Crop Verification**: For dense tables (≥8 rows), automatically runs 4 overlapping crop extractions with cross-validation to prevent truncation and misreading.
-    7.  **Merging**: OCR and Vision results are merged, with Vision taking priority and OCR filling gaps.
+-   **Multi-stage processing for engineering documents** (production grade — no shortcuts, no skipping):
+    1.  **PDF to Images**: `pdf2image`/Poppler converts PDFs to **300 DPI** images (captures small annotations on large-format drawings).
+    2.  **Image Preprocessing**: OpenCV adaptive thresholding for Tesseract.
+    3.  **Targeted OCR**: Tesseract OCR applied to title block, revision block, full page, and callout detection.
+    4.  **Full-Page Vision**: GPT-4o Vision (`detail: "high"`, 8192 max tokens) for structured extraction. Runs on EVERY page — no skip thresholds.
+    5.  **3×3 Tiled Vision**: Every page is split into a **3×3 grid (9 tiles, 15% overlap)**, each sent to GPT-4o Vision (`detail: "high"`, 6144 max tokens per tile). This captures small dimensions, annotations, and details that full-page Vision misses. JPEG quality 92.
+    6.  **Table Verification**: Dense table pages (≥8 rows detected in any pass) additionally run 4-region overlapping crop extractions with cross-validation to prevent truncation and misreading.
+    7.  **Exhaustive Merge**: All 10+ Vision results (full-page + 9 tiles + optional table crops) plus OCR are merged with deduplication. Text, callouts, notes, legends, and tables are unioned from all passes. Table rows are cross-validated with conflict detection.
+    8.  **Quality Gate**: Non-voided pages with <30 chars of extracted text are flagged for manual review.
 -   **Extracted fields**: Title block data, revision history, general notes, structured tables (compaction density, material schedules, pipe schedules), callouts, legends, full raw text.
 -   **PE Stamp Extraction**: Professional Engineer stamp data (name, license, discipline) is extracted via targeted right-edge crops of drawing pages. Stamps with signatures over printed names require focused crops for reliable OCR. PE data is injected into `all_text` as structured `PROFESSIONAL ENGINEER STAMP` blocks and indexed as dedicated searchable chunks per discipline (civil, electrical, plumbing/mechanical).
 -   **Voided Page Detection**: GPT-4o Vision detects pages with large X marks, "VOID", "DELETED", "REMOVED", "SUPERSEDED", or "NOT USED" markings. Voided pages get `voided: true` flag and reason. Cover sheet X marks on sheet listings are noted in general_notes. Voided page chunks are tagged `[VOIDED/REMOVED FROM PROJECT]` in the index with a warning chunk, and the LLM system prompt instructs the AI to exclude voided data from current scope answers.

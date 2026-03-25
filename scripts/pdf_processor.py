@@ -1,23 +1,27 @@
 #!/usr/bin/env python3
 """
-Construction PDF Ingestion Pipeline
-====================================
-Two-pass extraction for construction engineering documents:
-  Pass 1: PDF → images → OpenCV preprocessing → Tesseract OCR (targeted regions)
-  Pass 2: Downsampled page images → GPT-4o Vision (2×2 tiled, memory-efficient)
-  Pass 3: Merge OCR + Vision, vision takes priority
+Construction PDF Ingestion Pipeline — Production Grade
+========================================================
+Three-pass extraction for construction engineering documents:
+  Pass 1: PDF → images @ 300 DPI → OpenCV preprocessing → Tesseract OCR (targeted regions)
+  Pass 2: Full-page GPT-4o Vision (high detail) for overview + title block
+  Pass 3: 3×3 tiled grid (9 crops, 15% overlap) → GPT-4o Vision per tile for exhaustive detail
+  Pass 4: Merge OCR + full-page Vision + all tile Vision results
+
+Every page is ALWAYS processed by all passes. No shortcuts, no thresholds that skip content.
+Construction documents contain life-safety critical information — every dimension, annotation,
+note, and specification must be captured regardless of how small or graphical the page is.
 
 Memory/performance strategy:
   - Convert ONE page at a time (never all pages at once)
-  - 100 DPI for PDF conversion (sufficient for large-format drawings)
+  - 300 DPI for PDF conversion (captures small annotations on large-format drawings)
   - Downscale images to max 2400px wide before Tesseract (speed + memory)
-  - Resize vision tiles to max 1200px before GPT-4o
-  - 2×2 tile grid (4 tiles per page)
+  - 3×3 tile grid (9 tiles per page) with 15% overlap — no boundary content loss
   - Explicit gc.collect() between pages
 
 Usage:
-  python3 pdf_processor.py <pdf_path> <ai_base_url> <ai_api_key>
-  Output: JSON to stdout
+  python3 pdf_processor.py <pdf_path> <ai_base_url> <ai_api_key> [start_page] [end_page] [--stream]
+  Output: JSON to stdout (or streaming JSON lines with --stream)
 """
 
 import sys
@@ -39,16 +43,25 @@ import pdf2image
 import httpx
 from openai import OpenAI
 
-MAX_PAGES = 2000         # No practical limit — process entire drawing sets
-DPI = 100                # 100 DPI — enough for large-format engineering drawings
-MAX_OCR_WIDTH = 1600     # Downscale images wider than this before Tesseract
-TILE_GRID = (2, 2)       # 2×2 = 4 tiles per page
-TILE_OVERLAP = 0.12      # 12% overlap between tiles — prevents boundary content loss
-VISION_MAX_PX = 2000     # Max width for vision images sent to GPT-4o (full page)
-VISION_MAX_TOKENS = 4096 # Response token limit for GPT-4o (full page, single call)
-MIN_OCR_CHARS_FOR_VISION = 100  # Skip vision if OCR text shorter than this (nearly blank page)
-TABLE_ROW_THRESHOLD = 8  # If full-page extraction gets >= this many table rows, do multi-crop verification
+MAX_PAGES = 2000
+DPI = 300
+MAX_OCR_WIDTH = 2400
+TILE_GRID = (3, 3)
+TILE_OVERLAP = 0.15
+VISION_MAX_PX = 2400
+VISION_TILE_MAX_PX = 1800
+VISION_MAX_TOKENS = 8192
+VISION_TILE_MAX_TOKENS = 6144
+TABLE_ROW_THRESHOLD = 8
 STANDARD_PIPE_SIZES = {4, 6, 8, 10, 12, 15, 18, 21, 24, 27, 30, 36, 42, 48, 54, 60, 72}
+JPEG_QUALITY = 92
+QUALITY_GATE_MIN_CHARS = 30
+
+TILE_NAMES_3x3 = [
+    "top-left", "top-center", "top-right",
+    "middle-left", "middle-center", "middle-right",
+    "bottom-left", "bottom-center", "bottom-right",
+]
 
 MULTI_CROP_REGIONS = [
     ("top-left",     (0.0,  0.0,  0.55, 0.55)),
@@ -64,7 +77,6 @@ def get_page_count(pdf_path: str) -> int:
 
 
 def load_single_page(pdf_path: str, page_num: int) -> Image.Image:
-    """Convert a single PDF page to a PIL Image at DPI. Load only one page."""
     images = pdf2image.convert_from_path(
         pdf_path,
         dpi=DPI,
@@ -76,7 +88,6 @@ def load_single_page(pdf_path: str, page_num: int) -> Image.Image:
 
 
 def downscale_if_large(img: Image.Image, max_width: int) -> Image.Image:
-    """Downscale image width to max_width if needed, preserve aspect ratio."""
     if img.width > max_width:
         ratio = max_width / img.width
         new_h = int(img.height * ratio)
@@ -85,7 +96,6 @@ def downscale_if_large(img: Image.Image, max_width: int) -> Image.Image:
 
 
 def preprocess_for_ocr(pil_image: Image.Image) -> np.ndarray:
-    """Grayscale + adaptive threshold for Tesseract."""
     img_array = np.array(pil_image)
     if img_array.ndim == 3:
         bgr = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
@@ -101,7 +111,6 @@ def preprocess_for_ocr(pil_image: Image.Image) -> np.ndarray:
 
 
 def ocr_image(np_image: np.ndarray) -> tuple[str, float]:
-    """Run Tesseract OCR. Returns (text, avg_confidence)."""
     text = pytesseract.image_to_string(np_image, config='--psm 6')
     try:
         data = pytesseract.image_to_data(np_image, output_type=Output.DICT)
@@ -113,7 +122,6 @@ def ocr_image(np_image: np.ndarray) -> tuple[str, float]:
 
 
 def crop_region(image: Image.Image, x_pct: tuple, y_pct: tuple) -> Image.Image:
-    """Crop a region defined by percentage bounds (x: left..right, y: top..bottom)."""
     w, h = image.size
     x1 = int(w * x_pct[0])
     x2 = int(w * x_pct[1])
@@ -123,7 +131,6 @@ def crop_region(image: Image.Image, x_pct: tuple, y_pct: tuple) -> Image.Image:
 
 
 def ocr_region(page: Image.Image, x_pct: tuple, y_pct: tuple) -> tuple[str, float]:
-    """Crop + downscale + preprocess + OCR a region."""
     cropped = crop_region(page, x_pct, y_pct)
     cropped = downscale_if_large(cropped, MAX_OCR_WIDTH)
     processed = preprocess_for_ocr(cropped)
@@ -133,14 +140,12 @@ def ocr_region(page: Image.Image, x_pct: tuple, y_pct: tuple) -> tuple[str, floa
 
 
 def detect_callout_candidates(page_small: Image.Image) -> list[str]:
-    """Detect text matching callout patterns in small regions via contour+OCR."""
     callout_pattern = re.compile(
         r'(DETAIL\s+[A-Z0-9]+|SECTION\s+[A-Z0-9\-/]+|SEE\s+NOTE\s+[0-9]+|TYP\.?|'
         r'[A-Z]-[A-Z0-9]|[A-Z]/[A-Z0-9]|\([A-Z0-9]+\)|SCALE\s+\d+:\d+|'
         r'(N|S|E|W|NE|NW|SE|SW)\s*(ELEVATION|ELEV)|SIM\.?)',
         re.IGNORECASE
     )
-    # Work on a small version to avoid slowness
     small = downscale_if_large(page_small, 1600)
     processed = preprocess_for_ocr(small)
     inverted = cv2.bitwise_not(processed)
@@ -162,8 +167,7 @@ def detect_callout_candidates(page_small: Image.Image) -> list[str]:
     return list(set(results))[:15]
 
 
-def tile_image(page: Image.Image) -> list[tuple[str, Image.Image]]:
-    """Split into 2×2 grid with overlap."""
+def tile_image_3x3(page: Image.Image) -> list[tuple[str, Image.Image]]:
     w, h = page.size
     rows, cols = TILE_GRID
     overlap_x = int(w * TILE_OVERLAP)
@@ -171,7 +175,6 @@ def tile_image(page: Image.Image) -> list[tuple[str, Image.Image]]:
     tile_w = w // cols
     tile_h = h // rows
 
-    names = ["top-left", "top-right", "bottom-left", "bottom-right"]
     tiles = []
     for r in range(rows):
         for c in range(cols):
@@ -179,20 +182,20 @@ def tile_image(page: Image.Image) -> list[tuple[str, Image.Image]]:
             y1 = max(0, r * tile_h - overlap_y)
             x2 = min(w, (c + 1) * tile_w + overlap_x)
             y2 = min(h, (r + 1) * tile_h + overlap_y)
-            tiles.append((names[r * cols + c], page.crop((x1, y1, x2, y2))))
+            name = TILE_NAMES_3x3[r * cols + c]
+            tiles.append((name, page.crop((x1, y1, x2, y2))))
 
     return tiles
 
 
 def pil_to_base64(img: Image.Image, max_width: int = VISION_MAX_PX) -> str:
-    """Resize and encode as base64 JPEG."""
     img = downscale_if_large(img, max_width)
     buf = io.BytesIO()
-    img.save(buf, format="JPEG", quality=82)
+    img.save(buf, format="JPEG", quality=JPEG_QUALITY)
     return base64.b64encode(buf.getvalue()).decode("utf-8")
 
 
-VISION_PROMPT = """You are a construction drawing analyst. Extract ALL readable text and structured data from this section of an engineering drawing. Be exhaustive — do not skip or summarize anything.
+VISION_PROMPT_FULLPAGE = """You are a construction drawing analyst. Extract ALL readable text and structured data from this FULL PAGE of an engineering drawing. Be absolutely exhaustive — every dimension, annotation, note, specification, and label matters. Lives and millions of dollars depend on accuracy.
 
 Return JSON with exactly this structure:
 {
@@ -221,35 +224,64 @@ Return JSON with exactly this structure:
     }
   ],
   "callouts": [
-    { "text": "", "type": "detail_ref | section_cut | note | grid | annotation" }
+    { "text": "", "type": "detail_ref | section_cut | note | grid | annotation | dimension" }
   ],
   "legends": [
     { "symbol": "", "description": "" }
   ],
-  "all_text": "ALL visible text in reading order — include complete table contents, every note in full, all dimensions, all specifications"
+  "all_text": "ALL visible text in reading order — include complete table contents, every note in full, all dimensions, all specifications, all annotations no matter how small"
 }
 
 Rules:
-- VOIDED PAGE DETECTION IS CRITICAL: If the page has a large "X" drawn across it, or is crossed out, or has "VOID", "DELETED", "REMOVED", "SUPERSEDED", or "NOT USED" stamped on it, set "voided": true and "voided_reason" to a description (e.g. "Large X drawn across entire page", "Marked VOID"). Still extract all readable text even from voided pages.
-- On cover sheets or drawing index pages, look for X marks or strikethrough on individual sheet listings — note which sheets are marked as removed in the general_notes array (e.g. "Sheets marked as removed: S-101, S-102")
+- VOIDED PAGE DETECTION IS CRITICAL: If the page has a large "X" drawn across it, or is crossed out, or has "VOID", "DELETED", "REMOVED", "SUPERSEDED", or "NOT USED" stamped on it, set "voided": true and "voided_reason" to a description. Still extract all readable text even from voided pages.
+- On cover sheets or drawing index pages, look for X marks or strikethrough on individual sheet listings — note which sheets are marked as removed in the general_notes array
 - Extract EVERY piece of visible text — do not summarize, abbreviate, or skip anything
-- Return null for title_block fields not visible; return empty arrays for missing lists
-- Include every note, callout, label, dimension, specification, and table you can read
-- TABLES ARE CRITICAL: Extract ALL tables completely — compaction density tables, material schedules, dimension tables, pipe schedules, quantity tables. Include every row, column header, and cell value
-- NUMERICAL ACCURACY IS CRITICAL: Read each number carefully. Pipe diameters are typically 12", 15", 18", 24", 30", 36", 42", 48" — not arbitrary values like 13 or 17. Double-check every number against the actual text in the image
-- Pipe IDs follow phase conventions (P1-xx for Phase 1, P2-xx for Phase 2, etc.) — preserve the exact ID as written
-- Include all percentages, densities, strengths (PSI), dimensions, and numerical specifications
-- Include all references to standards (PennDOT, ASTM, AASHTO, ACI, etc.) with their full section numbers
-- confidence: 0.0-1.0 based on how clearly title block info is present"""
+- DIMENSIONS ARE CRITICAL: Read every dimension line, every "MIN", "MAX", "TYP" annotation, every thickness callout, every clearance, every elevation. Examples: '2-1/2" MIN.', '1-1/2" THICK', '3/4" GAP', '#5 @ 12" O.C.'
+- TABLES ARE CRITICAL: Extract ALL tables completely — every row, column header, and cell value
+- NUMERICAL ACCURACY IS CRITICAL: Read each number carefully. Pipe diameters are typically 12", 15", 18", 24", 30", 36", 42", 48"
+- Include all references to standards (PennDOT, ASTM, AASHTO, ACI, etc.)
+- confidence: 0.0-1.0 based on how clearly title block info is present
+- Return null for title_block fields not visible; return empty arrays for missing lists"""
+
+
+VISION_PROMPT_TILE = """You are a construction drawing analyst examining one SECTION of a larger engineering drawing. Extract EVERY piece of text, dimension, annotation, specification, and label visible in this section. Be absolutely exhaustive — no detail is too small to capture. Lives and millions of dollars depend on accuracy.
+
+Return JSON:
+{
+  "general_notes": ["full text of any notes visible"],
+  "tables": [
+    {
+      "title": "table heading",
+      "headers": ["col1", "col2"],
+      "rows": [["val1", "val2"]],
+      "raw_text": "full table rendered as plain text"
+    }
+  ],
+  "callouts": [
+    { "text": "", "type": "detail_ref | section_cut | note | grid | annotation | dimension" }
+  ],
+  "legends": [
+    { "symbol": "", "description": "" }
+  ],
+  "all_text": "ALL visible text — every dimension, annotation, label, specification, material callout, elevation, and note. Include fractional dimensions like 2-1/2\\", thickness callouts like 1-1/2\\" THICK, minimum/maximum specs, clearances, and structural details."
+}
+
+CRITICAL RULES:
+- Extract EVERY piece of text no matter how small
+- DIMENSIONS: Read every dimension annotation: '2-1/2" MIN.', '1-1/2" THICK WALL', '3/4" CLEAR', '#5 @ 12" O.C.', 'EL. 188.17', etc.
+- MATERIALS: Capture all material specs: 'CLASS A (3000 PSI)', 'ASTM A36', 'R-3 RIP RAP', 'NO. 57 STONE', etc.
+- TABLES: Extract ALL rows completely. Never truncate.
+- NUMERICAL ACCURACY: Read each number carefully. Double-check against the image.
+- Include all references to standards with full section numbers
+- If text is partially visible at the edge of this section, include what you can read"""
 
 
 VISION_TIMEOUT = 120
 VISION_MAX_RETRIES = 3
 VISION_RETRY_DELAY = 5
 
-def vision_extract(client: OpenAI, img: Image.Image) -> dict:
-    """Send an image tile to GPT-4o Vision and return structured JSON with timeout + retry."""
-    b64 = pil_to_base64(img)
+def vision_extract_fullpage(client: OpenAI, img: Image.Image) -> dict:
+    b64 = pil_to_base64(img, max_width=VISION_MAX_PX)
     empty = {
         "voided": False,
         "voided_reason": None,
@@ -269,8 +301,8 @@ def vision_extract(client: OpenAI, img: Image.Image) -> dict:
                 messages=[{
                     "role": "user",
                     "content": [
-                        {"type": "text", "text": VISION_PROMPT},
-                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}}
+                        {"type": "text", "text": VISION_PROMPT_FULLPAGE},
+                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}", "detail": "high"}}
                     ]
                 }]
             )
@@ -282,7 +314,37 @@ def vision_extract(client: OpenAI, img: Image.Image) -> dict:
                     result["tables"] = []
                 return result
         except Exception as e:
-            print(f"Vision extract error (attempt {attempt}/{VISION_MAX_RETRIES}): {e}", file=sys.stderr)
+            print(f"Vision full-page error (attempt {attempt}/{VISION_MAX_RETRIES}): {e}", file=sys.stderr)
+            if attempt < VISION_MAX_RETRIES:
+                time.sleep(VISION_RETRY_DELAY * attempt)
+    return empty
+
+
+def vision_extract_tile(client: OpenAI, img: Image.Image, tile_name: str) -> dict:
+    b64 = pil_to_base64(img, max_width=VISION_TILE_MAX_PX)
+    empty = {"general_notes": [], "tables": [], "callouts": [], "legends": [], "all_text": ""}
+    for attempt in range(1, VISION_MAX_RETRIES + 1):
+        try:
+            response = client.chat.completions.create(
+                model="gpt-4o",
+                max_tokens=VISION_TILE_MAX_TOKENS,
+                messages=[{
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": VISION_PROMPT_TILE},
+                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}", "detail": "high"}}
+                    ]
+                }]
+            )
+            content = response.choices[0].message.content or ""
+            json_match = re.search(r'\{[\s\S]*\}', content)
+            if json_match:
+                result = json.loads(json_match.group())
+                if "tables" not in result:
+                    result["tables"] = []
+                return result
+        except Exception as e:
+            print(f"Vision tile '{tile_name}' error (attempt {attempt}/{VISION_MAX_RETRIES}): {e}", file=sys.stderr)
             if attempt < VISION_MAX_RETRIES:
                 time.sleep(VISION_RETRY_DELAY * attempt)
     return empty
@@ -379,12 +441,12 @@ CRITICAL RULES:
     try:
         response = client.chat.completions.create(
             model="gpt-4o",
-            max_tokens=VISION_MAX_TOKENS,
+            max_tokens=VISION_TILE_MAX_TOKENS,
             messages=[{
                 "role": "user",
                 "content": [
                     {"type": "text", "text": prompt},
-                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}}
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}", "detail": "high"}}
                 ]
             }]
         )
@@ -429,8 +491,9 @@ def merge_table_extractions(full_page: dict, crop_results: list[tuple[str, dict]
         return f"__EMPTY_{anon_counter[0]}"
 
     for source_name, data in [("full_page", full_page)] + crop_results:
-        for table in data.get("tables", []):
-            title = normalize_title(table.get("title", "UNTITLED"))
+        for ti, table in enumerate(data.get("tables", [])):
+            raw_title = (table.get("title") or "").strip()
+            title = normalize_title(raw_title) if raw_title else f"__UNTITLED_{source_name}_{ti}"
             if title not in all_rows_by_table:
                 all_rows_by_table[title] = {
                     "title": table.get("title", ""),
@@ -489,23 +552,133 @@ def merge_table_extractions(full_page: dict, crop_results: list[tuple[str, dict]
     return {"tables": merged_tables, "warnings": all_warnings}
 
 
-def merge_results(ocr_data: dict, vision_data: dict) -> dict:
-    """Merge OCR + Vision. Vision takes priority; OCR supplements all_text."""
-    merged = dict(vision_data)
+def deduplicate_lines(text: str) -> str:
+    seen = set()
+    result = []
+    for line in text.split('\n'):
+        stripped = line.strip()
+        if not stripped:
+            result.append(line)
+            continue
+        normalized = re.sub(r'\s+', ' ', stripped.lower())
+        if normalized not in seen:
+            seen.add(normalized)
+            result.append(line)
+    return '\n'.join(result)
+
+
+def merge_all_text_sources(fullpage_text: str, tile_texts: list[str], ocr_text: str) -> str:
+    seen_normalized = set()
+    all_lines = []
+
+    def add_lines(text: str):
+        for line in text.split('\n'):
+            stripped = line.strip()
+            if not stripped:
+                continue
+            normalized = re.sub(r'\s+', ' ', stripped.lower())
+            if normalized not in seen_normalized:
+                seen_normalized.add(normalized)
+                all_lines.append(stripped)
+
+    add_lines(fullpage_text)
+    for tile_text in tile_texts:
+        add_lines(tile_text)
+    if ocr_text:
+        ocr_unique = []
+        for line in ocr_text.split('\n'):
+            stripped = line.strip()
+            if not stripped:
+                continue
+            normalized = re.sub(r'\s+', ' ', stripped.lower())
+            if normalized not in seen_normalized:
+                seen_normalized.add(normalized)
+                ocr_unique.append(stripped)
+        if ocr_unique:
+            all_lines.append("\n[OCR]")
+            all_lines.extend(ocr_unique)
+
+    return '\n'.join(all_lines)
+
+
+def merge_callouts(fullpage_callouts: list, tile_callouts: list[list]) -> list:
+    seen = set()
+    result = []
+    for callout in fullpage_callouts:
+        text = callout.get("text", "").strip().lower()
+        if text and text not in seen:
+            seen.add(text)
+            result.append(callout)
+    for tile_list in tile_callouts:
+        for callout in tile_list:
+            text = callout.get("text", "").strip().lower()
+            if text and text not in seen:
+                seen.add(text)
+                result.append(callout)
+    return result
+
+
+def merge_notes(fullpage_notes: list, tile_notes: list[list]) -> list:
+    seen = set()
+    result = []
+    for note in fullpage_notes:
+        normalized = re.sub(r'\s+', ' ', note.strip().lower())
+        if normalized and normalized not in seen:
+            seen.add(normalized)
+            result.append(note)
+    for tile_list in tile_notes:
+        for note in tile_list:
+            normalized = re.sub(r'\s+', ' ', note.strip().lower())
+            if normalized and normalized not in seen:
+                seen.add(normalized)
+                result.append(note)
+    return result
+
+
+def merge_legends(fullpage_legends: list, tile_legends: list[list]) -> list:
+    seen = set()
+    result = []
+    for legend in fullpage_legends:
+        desc = legend.get("description", "").strip().lower()
+        if desc and desc not in seen:
+            seen.add(desc)
+            result.append(legend)
+    for tile_list in tile_legends:
+        for legend in tile_list:
+            desc = legend.get("description", "").strip().lower()
+            if desc and desc not in seen:
+                seen.add(desc)
+                result.append(legend)
+    return result
+
+
+def merge_results(ocr_data: dict, fullpage_vision: dict, tile_results: list[dict]) -> dict:
+    merged = dict(fullpage_vision)
 
     if "voided" not in merged:
         merged["voided"] = False
     if "voided_reason" not in merged:
         merged["voided_reason"] = None
 
-    vision_text = vision_data.get("all_text") or ""
+    fullpage_text = fullpage_vision.get("all_text") or ""
+    tile_texts = [t.get("all_text", "") for t in tile_results]
     ocr_full_text = ocr_data.get("full_text", "")
-    if ocr_full_text and len(ocr_full_text) > len(vision_text):
-        merged["all_text"] = vision_text + "\n\n[OCR]\n" + ocr_full_text
-    else:
-        merged["all_text"] = vision_text
 
-    # Append table content to all_text so it's always searchable
+    merged["all_text"] = merge_all_text_sources(fullpage_text, tile_texts, ocr_full_text)
+
+    all_tables_sources = [("full_page", fullpage_vision)]
+    for i, tile_data in enumerate(tile_results):
+        tile_name = TILE_NAMES_3x3[i] if i < len(TILE_NAMES_3x3) else f"tile_{i}"
+        all_tables_sources.append((tile_name, tile_data))
+
+    if any(len(src.get("tables", [])) > 0 for _, src in all_tables_sources):
+        table_merge = merge_table_extractions(fullpage_vision, [(n, d) for n, d in all_tables_sources[1:]])
+        merged["tables"] = table_merge["tables"]
+        if table_merge.get("warnings"):
+            merged["_data_warnings"] = table_merge["warnings"]
+    else:
+        merged["tables"] = fullpage_vision.get("tables") or []
+
     tables = merged.get("tables") or []
     if tables:
         table_lines = []
@@ -521,16 +694,29 @@ def merge_results(ocr_data: dict, vision_data: dict) -> dict:
         if table_lines:
             merged["all_text"] = merged["all_text"] + "\n\n" + "\n".join(table_lines)
 
-    # Merge OCR callouts vision may have missed
+    tile_callouts = [t.get("callouts", []) for t in tile_results]
+    merged["callouts"] = merge_callouts(
+        list(fullpage_vision.get("callouts") or []),
+        tile_callouts
+    )
     ocr_callouts = ocr_data.get("callouts", [])
-    vision_callouts = list(vision_data.get("callouts") or [])
-    existing_texts = {c.get("text", "").lower() for c in vision_callouts}
+    existing_texts = {c.get("text", "").lower() for c in merged["callouts"]}
     for t in ocr_callouts:
         if t.lower() not in existing_texts:
-            vision_callouts.append({"text": t, "type": "annotation"})
-    merged["callouts"] = vision_callouts
+            merged["callouts"].append({"text": t, "type": "annotation"})
 
-    # Ensure title block has confidence key
+    tile_notes = [t.get("general_notes", []) for t in tile_results]
+    merged["general_notes"] = merge_notes(
+        list(fullpage_vision.get("general_notes") or []),
+        tile_notes
+    )
+
+    tile_legends = [t.get("legends", []) for t in tile_results]
+    merged["legends"] = merge_legends(
+        list(fullpage_vision.get("legends") or []),
+        tile_legends
+    )
+
     tb = merged.get("title_block") or {}
     if isinstance(tb, dict) and "confidence" not in tb:
         tb["confidence"] = 0.5
@@ -540,12 +726,11 @@ def merge_results(ocr_data: dict, vision_data: dict) -> dict:
 
 
 def process_page(page_num: int, pdf_path: str, client: OpenAI) -> dict:
-    """Full pipeline on one page. Loads page image and frees it when done."""
-
     page = load_single_page(pdf_path, page_num)
+    w, h = page.size
+    print(f"  Page {page_num}: {w}x{h}px @ {DPI} DPI", file=sys.stderr)
 
     page_ocr = downscale_if_large(page, MAX_OCR_WIDTH)
-
     tb_text, tb_conf = ocr_region(page_ocr, (0.60, 1.0), (0.78, 1.0))
     if not tb_text.strip():
         tb_text, tb_conf = ocr_region(page_ocr, (0.0, 1.0), (0.85, 1.0))
@@ -568,96 +753,84 @@ def process_page(page_num: int, pdf_path: str, client: OpenAI) -> dict:
         "callouts": callout_texts,
     }
 
-    merged_vision = {
-        "title_block": None,
-        "revision_history": [],
-        "general_notes": [],
-        "tables": [],
-        "callouts": [],
-        "legends": [],
-        "all_text": "",
-    }
-
-    ocr_text_len = len(full_text.strip())
-    if ocr_text_len < MIN_OCR_CHARS_FOR_VISION:
-        print(f"  Low OCR text ({ocr_text_len} chars) — running vision anyway (drawing may contain critical annotations)", file=sys.stderr)
-
-    print(f"  Running vision (full-page)...", file=sys.stderr)
-    page_vision = downscale_if_large(page, VISION_MAX_PX)
-
-    merged_vision = vision_extract(client, page_vision)
-    del page_vision
+    print(f"  Running full-page vision...", file=sys.stderr)
+    page_fullpage = downscale_if_large(page, VISION_MAX_PX)
+    fullpage_vision = vision_extract_fullpage(client, page_fullpage)
+    del page_fullpage
     gc.collect()
 
-    full_page_rows = count_table_rows(merged_vision)
-    has_table_keywords = bool(re.search(
-        r'(?i)(pipe\s*schedule|manhole|inlet|quantity|material\s*schedule|compaction)',
-        full_text
-    ))
-    should_multicrop = (full_page_rows >= TABLE_ROW_THRESHOLD or
-                       (has_table_keywords and len(merged_vision.get("tables", [])) > 0))
+    fullpage_text_len = len((fullpage_vision.get("all_text") or "").strip())
+    print(f"  Full-page vision: {fullpage_text_len} chars, {count_table_rows(fullpage_vision)} table rows", file=sys.stderr)
 
-    if should_multicrop:
-        print(f"  Dense table page detected ({full_page_rows} rows). Running multi-crop verification...", file=sys.stderr)
+    print(f"  Running 3x3 tiled vision (9 tiles, 15% overlap)...", file=sys.stderr)
+    tiles = tile_image_3x3(page)
+    tile_results = []
+    for tile_name, tile_img in tiles:
+        print(f"    Tile {tile_name} ({tile_img.size[0]}x{tile_img.size[1]})...", file=sys.stderr)
+        tile_data = vision_extract_tile(client, tile_img, tile_name)
+        tile_text_len = len((tile_data.get("all_text") or "").strip())
+        tile_tables = count_table_rows(tile_data)
+        print(f"    Tile {tile_name}: {tile_text_len} chars, {tile_tables} table rows", file=sys.stderr)
+        tile_results.append(tile_data)
+        del tile_img
+    del tiles
+    gc.collect()
 
+    total_tile_chars = sum(len((t.get("all_text") or "").strip()) for t in tile_results)
+    print(f"  Tile totals: {total_tile_chars} chars across 9 tiles", file=sys.stderr)
+
+    has_significant_tables = any(
+        count_table_rows(t) >= TABLE_ROW_THRESHOLD
+        for t in [fullpage_vision] + tile_results
+    )
+    if has_significant_tables:
+        print(f"  Dense tables detected — running 4-region table verification...", file=sys.stderr)
         page_hires = load_single_page(pdf_path, page_num)
-
         crop_results = []
         for region_name, crop_box in MULTI_CROP_REGIONS:
             try:
-                print(f"    Extracting crop: {region_name}...", file=sys.stderr)
+                print(f"    Table crop {region_name}...", file=sys.stderr)
                 crop_data = extract_table_from_crop(client, page_hires, region_name, crop_box)
                 crop_rows = count_table_rows(crop_data)
-                print(f"    {region_name}: {crop_rows} rows from {len(crop_data.get('tables', []))} tables", file=sys.stderr)
                 if crop_rows > 0:
+                    print(f"    {region_name}: {crop_rows} rows", file=sys.stderr)
                     crop_results.append((region_name, crop_data))
             except Exception as e:
                 print(f"    {region_name} failed: {e}", file=sys.stderr)
-
         del page_hires
         gc.collect()
 
-        if crop_results:
-            merged = merge_table_extractions(merged_vision, crop_results)
-            total_merged_rows = sum(len(t.get("rows", [])) for t in merged["tables"])
-            print(f"  Merged tables: {total_merged_rows} rows (was {full_page_rows} from full-page)", file=sys.stderr)
-
-            if merged.get("warnings"):
-                print(f"  ⚠ CROSS-VALIDATION WARNINGS:", file=sys.stderr)
-                for w in merged["warnings"]:
-                    print(f"    {w}", file=sys.stderr)
-
-            pipe_warnings = validate_pipe_diameters(merged["tables"])
-            if pipe_warnings:
-                print(f"  ⚠ NON-STANDARD PIPE SIZES: {', '.join(pipe_warnings)}", file=sys.stderr)
-
-            gap_warnings = check_sequential_gaps(merged["tables"])
-            if gap_warnings:
-                print(f"  ⚠ SEQUENCE GAPS: {'; '.join(gap_warnings)}", file=sys.stderr)
-
-            non_table_data = {k: v for k, v in merged_vision.items() if k != "tables"}
-            merged_vision = {**non_table_data, "tables": merged["tables"]}
-
-            all_data_warnings = (merged.get("warnings", []) + pipe_warnings + gap_warnings)
-            if all_data_warnings:
-                merged_vision["_data_warnings"] = all_data_warnings
-    else:
-        pipe_warnings = validate_pipe_diameters(merged_vision.get("tables", []))
-        if pipe_warnings:
-            print(f"  ⚠ NON-STANDARD PIPE SIZES: {', '.join(pipe_warnings)}", file=sys.stderr)
-            merged_vision["_data_warnings"] = pipe_warnings
+        for crop_name, crop_data in crop_results:
+            tile_results.append(crop_data)
 
     del page
     gc.collect()
 
-    if merged_vision["title_block"] is None:
-        merged_vision["title_block"] = {k: None for k in ["project_name","drawing_title","sheet_number","revision","date","drawn_by","scale","confidence"]}
+    final = merge_results(ocr_data, fullpage_vision, tile_results)
 
-    final = merge_results(ocr_data, merged_vision)
+    if final.get("title_block") is None:
+        final["title_block"] = {k: None for k in ["project_name","drawing_title","sheet_number","revision","date","drawn_by","scale","confidence"]}
+
+    final_text_len = len((final.get("all_text") or "").strip())
+    is_voided = bool(final.get("voided", False))
+    if final_text_len < QUALITY_GATE_MIN_CHARS and not is_voided:
+        print(f"  ⚠ QUALITY GATE: Only {final_text_len} chars extracted from non-voided page {page_num}. May need manual review.", file=sys.stderr)
+
+    pipe_warnings = validate_pipe_diameters(final.get("tables") or [])
+    gap_warnings = check_sequential_gaps(final.get("tables") or [])
+    all_data_warnings = list(final.get("_data_warnings", [])) + pipe_warnings + gap_warnings
+    if pipe_warnings:
+        print(f"  ⚠ NON-STANDARD PIPE SIZES: {', '.join(pipe_warnings)}", file=sys.stderr)
+    if gap_warnings:
+        print(f"  ⚠ SEQUENCE GAPS: {'; '.join(gap_warnings)}", file=sys.stderr)
+
+    extraction_method = "ocr+vision_fullpage+vision_3x3"
+    if has_significant_tables:
+        extraction_method += "+table_verification"
 
     result = {
         "page_number": page_num,
-        "extraction_method": "ocr+vision+multicrop" if has_table_content(merged_vision) else "ocr+vision",
+        "extraction_method": extraction_method,
         "title_block": final.get("title_block"),
         "revision_history": final.get("revision_history") or [],
         "general_notes": final.get("general_notes") or [],
@@ -666,13 +839,14 @@ def process_page(page_num: int, pdf_path: str, client: OpenAI) -> dict:
         "legends": final.get("legends") or [],
         "all_text": final.get("all_text") or "",
         "ocr_confidence": ocr_data.get("ocr_confidence", 0.0),
-        "voided": bool(final.get("voided", False)),
+        "voided": is_voided,
         "voided_reason": final.get("voided_reason"),
     }
 
-    if merged_vision.get("_data_warnings"):
-        result["_data_warnings"] = merged_vision["_data_warnings"]
+    if all_data_warnings:
+        result["_data_warnings"] = all_data_warnings
 
+    print(f"  ✓ Page {page_num} complete: {final_text_len} chars, {len(final.get('callouts', []))} callouts, {count_table_rows(final)} table rows", file=sys.stderr)
     return result
 
 
@@ -685,9 +859,8 @@ def main():
     ai_base_url = sys.argv[2]
     ai_api_key = sys.argv[3]
 
-    # Optional: start_page, end_page, --stream flag
-    start_page_arg = int(sys.argv[4]) if len(sys.argv) > 4 else 1
-    end_page_arg = int(sys.argv[5]) if len(sys.argv) > 5 else None
+    start_page_arg = int(sys.argv[4]) if len(sys.argv) > 4 and sys.argv[4] != "--stream" else 1
+    end_page_arg = int(sys.argv[5]) if len(sys.argv) > 5 and sys.argv[5] != "--stream" else None
     streaming = "--stream" in sys.argv
 
     start_time = time.time()
@@ -707,34 +880,41 @@ def main():
     pages_to_process = range(start_page_arg, end_page + 1)
     results = []
 
+    print(f"Processing {len(pages_to_process)} pages at {DPI} DPI with {TILE_GRID[0]}x{TILE_GRID[1]} tiling ({TILE_OVERLAP*100:.0f}% overlap)...", file=sys.stderr)
+
     for i in pages_to_process:
+        print(f"\n--- Page {i}/{end_page} ---", file=sys.stderr)
         try:
             page_result = process_page(i, pdf_path, client)
             gc.collect()
         except Exception as e:
+            print(f"  ✗ Page {i} FAILED: {e}", file=sys.stderr)
             page_result = {
                 "page_number": i,
-                "extraction_method": "ocr+vision",
+                "extraction_method": "ocr+vision_fullpage+vision_3x3",
                 "title_block": {k: None for k in ["project_name","drawing_title","sheet_number","revision","date","drawn_by","scale","confidence"]},
                 "revision_history": [],
                 "general_notes": [],
+                "tables": [],
                 "callouts": [],
                 "legends": [],
                 "all_text": "",
                 "ocr_confidence": 0.0,
+                "voided": False,
+                "voided_reason": None,
                 "error": str(e),
             }
 
         if streaming:
-            # Emit each page immediately so the caller can save progress
             print(json.dumps({"type": "page", "total_pages": total_pages, "page": page_result}), flush=True)
         else:
             results.append(page_result)
 
     processing_time_ms = int((time.time() - start_time) * 1000)
+    elapsed_min = processing_time_ms / 60000
+    print(f"\n=== Completed {len(pages_to_process)} pages in {elapsed_min:.1f} minutes ===", file=sys.stderr)
 
     if streaming:
-        # Final summary line
         print(json.dumps({"type": "done", "total_pages": total_pages, "processing_time_ms": processing_time_ms}), flush=True)
     else:
         print(json.dumps({
