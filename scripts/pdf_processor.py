@@ -580,77 +580,75 @@ def process_page(page_num: int, pdf_path: str, client: OpenAI) -> dict:
 
     ocr_text_len = len(full_text.strip())
     if ocr_text_len < MIN_OCR_CHARS_FOR_VISION:
-        print(f"  Skipping vision (OCR text only {ocr_text_len} chars)", file=sys.stderr)
-        del page
+        print(f"  Low OCR text ({ocr_text_len} chars) — running vision anyway (drawing may contain critical annotations)", file=sys.stderr)
+
+    print(f"  Running vision (full-page)...", file=sys.stderr)
+    page_vision = downscale_if_large(page, VISION_MAX_PX)
+
+    merged_vision = vision_extract(client, page_vision)
+    del page_vision
+    gc.collect()
+
+    full_page_rows = count_table_rows(merged_vision)
+    has_table_keywords = bool(re.search(
+        r'(?i)(pipe\s*schedule|manhole|inlet|quantity|material\s*schedule|compaction)',
+        full_text
+    ))
+    should_multicrop = (full_page_rows >= TABLE_ROW_THRESHOLD or
+                       (has_table_keywords and len(merged_vision.get("tables", [])) > 0))
+
+    if should_multicrop:
+        print(f"  Dense table page detected ({full_page_rows} rows). Running multi-crop verification...", file=sys.stderr)
+
+        page_hires = load_single_page(pdf_path, page_num)
+
+        crop_results = []
+        for region_name, crop_box in MULTI_CROP_REGIONS:
+            try:
+                print(f"    Extracting crop: {region_name}...", file=sys.stderr)
+                crop_data = extract_table_from_crop(client, page_hires, region_name, crop_box)
+                crop_rows = count_table_rows(crop_data)
+                print(f"    {region_name}: {crop_rows} rows from {len(crop_data.get('tables', []))} tables", file=sys.stderr)
+                if crop_rows > 0:
+                    crop_results.append((region_name, crop_data))
+            except Exception as e:
+                print(f"    {region_name} failed: {e}", file=sys.stderr)
+
+        del page_hires
         gc.collect()
-    else:
-        print(f"  Running vision (full-page)...", file=sys.stderr)
-        page_vision = downscale_if_large(page, VISION_MAX_PX)
 
-        merged_vision = vision_extract(client, page_vision)
-        del page_vision
-        gc.collect()
+        if crop_results:
+            merged = merge_table_extractions(merged_vision, crop_results)
+            total_merged_rows = sum(len(t.get("rows", [])) for t in merged["tables"])
+            print(f"  Merged tables: {total_merged_rows} rows (was {full_page_rows} from full-page)", file=sys.stderr)
 
-        full_page_rows = count_table_rows(merged_vision)
-        has_table_keywords = bool(re.search(
-            r'(?i)(pipe\s*schedule|manhole|inlet|quantity|material\s*schedule|compaction)',
-            full_text
-        ))
-        should_multicrop = (full_page_rows >= TABLE_ROW_THRESHOLD or
-                           (has_table_keywords and len(merged_vision.get("tables", [])) > 0))
+            if merged.get("warnings"):
+                print(f"  ⚠ CROSS-VALIDATION WARNINGS:", file=sys.stderr)
+                for w in merged["warnings"]:
+                    print(f"    {w}", file=sys.stderr)
 
-        if should_multicrop:
-            print(f"  Dense table page detected ({full_page_rows} rows). Running multi-crop verification...", file=sys.stderr)
-
-            page_hires = load_single_page(pdf_path, page_num)
-
-            crop_results = []
-            for region_name, crop_box in MULTI_CROP_REGIONS:
-                try:
-                    print(f"    Extracting crop: {region_name}...", file=sys.stderr)
-                    crop_data = extract_table_from_crop(client, page_hires, region_name, crop_box)
-                    crop_rows = count_table_rows(crop_data)
-                    print(f"    {region_name}: {crop_rows} rows from {len(crop_data.get('tables', []))} tables", file=sys.stderr)
-                    if crop_rows > 0:
-                        crop_results.append((region_name, crop_data))
-                except Exception as e:
-                    print(f"    {region_name} failed: {e}", file=sys.stderr)
-
-            del page_hires
-            gc.collect()
-
-            if crop_results:
-                merged = merge_table_extractions(merged_vision, crop_results)
-                total_merged_rows = sum(len(t.get("rows", [])) for t in merged["tables"])
-                print(f"  Merged tables: {total_merged_rows} rows (was {full_page_rows} from full-page)", file=sys.stderr)
-
-                if merged.get("warnings"):
-                    print(f"  ⚠ CROSS-VALIDATION WARNINGS:", file=sys.stderr)
-                    for w in merged["warnings"]:
-                        print(f"    {w}", file=sys.stderr)
-
-                pipe_warnings = validate_pipe_diameters(merged["tables"])
-                if pipe_warnings:
-                    print(f"  ⚠ NON-STANDARD PIPE SIZES: {', '.join(pipe_warnings)}", file=sys.stderr)
-
-                gap_warnings = check_sequential_gaps(merged["tables"])
-                if gap_warnings:
-                    print(f"  ⚠ SEQUENCE GAPS: {'; '.join(gap_warnings)}", file=sys.stderr)
-
-                non_table_data = {k: v for k, v in merged_vision.items() if k != "tables"}
-                merged_vision = {**non_table_data, "tables": merged["tables"]}
-
-                all_data_warnings = (merged.get("warnings", []) + pipe_warnings + gap_warnings)
-                if all_data_warnings:
-                    merged_vision["_data_warnings"] = all_data_warnings
-        else:
-            pipe_warnings = validate_pipe_diameters(merged_vision.get("tables", []))
+            pipe_warnings = validate_pipe_diameters(merged["tables"])
             if pipe_warnings:
                 print(f"  ⚠ NON-STANDARD PIPE SIZES: {', '.join(pipe_warnings)}", file=sys.stderr)
-                merged_vision["_data_warnings"] = pipe_warnings
 
-        del page
-        gc.collect()
+            gap_warnings = check_sequential_gaps(merged["tables"])
+            if gap_warnings:
+                print(f"  ⚠ SEQUENCE GAPS: {'; '.join(gap_warnings)}", file=sys.stderr)
+
+            non_table_data = {k: v for k, v in merged_vision.items() if k != "tables"}
+            merged_vision = {**non_table_data, "tables": merged["tables"]}
+
+            all_data_warnings = (merged.get("warnings", []) + pipe_warnings + gap_warnings)
+            if all_data_warnings:
+                merged_vision["_data_warnings"] = all_data_warnings
+    else:
+        pipe_warnings = validate_pipe_diameters(merged_vision.get("tables", []))
+        if pipe_warnings:
+            print(f"  ⚠ NON-STANDARD PIPE SIZES: {', '.join(pipe_warnings)}", file=sys.stderr)
+            merged_vision["_data_warnings"] = pipe_warnings
+
+    del page
+    gc.collect()
 
     if merged_vision["title_block"] is None:
         merged_vision["title_block"] = {k: None for k in ["project_name","drawing_title","sheet_number","revision","date","drawn_by","scale","confidence"]}
