@@ -442,8 +442,6 @@ router.post("/:id/chat", async (req, res) => {
       return;
     }
 
-    await db.insert(projectChatsTable).values({ projectId, role: "user", content: question, sources: [] });
-
     const searchStrategies: string[] = [];
 
     function dedupeChunks(existing: typeof relevantChunks, incoming: typeof relevantChunks) {
@@ -456,7 +454,16 @@ router.post("/:id/chat", async (req, res) => {
       }
     }
 
-    let relevantChunks = await keywordSearch(projectId, question, 30);
+    const [, relevantChunksResult, verifiedFacts] = await Promise.all([
+      db.insert(projectChatsTable).values({ projectId, role: "user", content: question, sources: [] }),
+      keywordSearch(projectId, question, 30),
+      db.select().from(verifiedFactsTable)
+        .where(eq(verifiedFactsTable.projectId, projectId))
+        .orderBy(desc(verifiedFactsTable.createdAt))
+        .limit(20),
+    ]);
+
+    let relevantChunks = relevantChunksResult;
     searchStrategies.push("hybrid_standard");
 
     if (relevantChunks.length < 5) {
@@ -485,7 +492,7 @@ router.post("/:id/chat", async (req, res) => {
       searchStrategies.push("zero_chunk_retry");
       try {
         const reformulateResult = await openai.chat.completions.create({
-          model: "gpt-4o",
+          model: "gpt-4o-mini",
           messages: [
             {
               role: "system",
@@ -544,7 +551,7 @@ Chunks:
 ${chunks.map((c, i) => `[${i}] ${c.content.slice(0, 400)}`).join("\n\n")}`;
 
         const rerankResult = await openai.chat.completions.create({
-          model: "gpt-4o",
+          model: "gpt-4o-mini",
           messages: [{ role: "user", content: rerankPrompt }],
           temperature: 0,
           max_tokens: 200,
@@ -605,6 +612,17 @@ FORMAT: Use clear structure. For tables, use markdown tables. For lists, use bul
         .join("\n\n---\n\n");
     }
 
+    function parseConfidence(text: string): { answer: string; confidence: number | null } {
+      let answer = text;
+      let confidence: number | null = null;
+      const confMatch = answer.match(/CONFIDENCE:\s*(\d+(?:\.\d+)?)\s*\/\s*10/i);
+      if (confMatch) {
+        confidence = parseFloat(confMatch[1]);
+        answer = answer.replace(/\n?\s*CONFIDENCE:\s*\d+(?:\.\d+)?\s*\/\s*10\s*$/i, "").trim();
+      }
+      return { answer, confidence };
+    }
+
     async function askLLM(systemPrompt: string, context: string, q: string) {
       const userMessage = `Project documents (context only — do not answer outside this):\n\n${context}\n\n---\n\nQuestion: ${q}`;
       const completion = await openai.chat.completions.create({
@@ -616,20 +634,31 @@ FORMAT: Use clear structure. For tables, use markdown tables. For lists, use bul
         temperature: 0.05,
         max_tokens: 2000,
       });
-      let answer = completion.choices[0]?.message?.content ?? "No response generated.";
-      let confidence: number | null = null;
-      const confMatch = answer.match(/CONFIDENCE:\s*(\d+(?:\.\d+)?)\s*\/\s*10/i);
-      if (confMatch) {
-        confidence = parseFloat(confMatch[1]);
-        answer = answer.replace(/\n?\s*CONFIDENCE:\s*\d+(?:\.\d+)?\s*\/\s*10\s*$/i, "").trim();
-      }
-      return { answer, confidence };
+      return parseConfidence(completion.choices[0]?.message?.content ?? "No response generated.");
     }
 
-    const verifiedFacts = await db.select().from(verifiedFactsTable)
-      .where(eq(verifiedFactsTable.projectId, projectId))
-      .orderBy(desc(verifiedFactsTable.createdAt))
-      .limit(20);
+    async function streamLLM(systemPrompt: string, context: string, q: string, res: import("express").Response) {
+      const userMessage = `Project documents (context only — do not answer outside this):\n\n${context}\n\n---\n\nQuestion: ${q}`;
+      const stream = await openai.chat.completions.create({
+        model: "gpt-4o",
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userMessage },
+        ],
+        temperature: 0.05,
+        max_tokens: 2000,
+        stream: true,
+      });
+      let fullText = "";
+      for await (const chunk of stream) {
+        const delta = chunk.choices[0]?.delta?.content ?? "";
+        if (delta) {
+          fullText += delta;
+          res.write(`data: ${JSON.stringify({ type: "token", content: delta })}\n\n`);
+        }
+      }
+      return parseConfidence(fullText);
+    }
 
     let verifiedFactsBlock = "";
     if (verifiedFacts.length > 0) {
@@ -640,7 +669,48 @@ FORMAT: Use clear structure. For tables, use markdown tables. For lists, use bul
 
     let usedChunks = await rerankChunks(relevantChunks, question);
     const sysPrompt = buildSystemPrompt(project.name);
-    let { answer, confidence } = await askLLM(sysPrompt, buildContextBlock(usedChunks) + verifiedFactsBlock, question);
+
+    const wantStream = req.headers.accept === "text/event-stream" || req.query.stream === "1";
+    let answer: string;
+    let confidence: number | null;
+
+    if (wantStream) {
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache");
+      res.setHeader("Connection", "keep-alive");
+      res.flushHeaders();
+
+      const sources = usedChunks.slice(0, 5).map((c) => ({
+        documentName: c.documentName,
+        documentType: c.documentType,
+        sectionLabel: c.sectionLabel,
+        excerpt: c.content.slice(0, 300) + (c.content.length > 300 ? "…" : ""),
+      }));
+      res.write(`data: ${JSON.stringify({ type: "sources", sources })}\n\n`);
+
+      try {
+        const result = await streamLLM(sysPrompt, buildContextBlock(usedChunks) + verifiedFactsBlock, question, res);
+        answer = result.answer;
+        confidence = result.confidence;
+
+        const [msg] = await db
+          .insert(projectChatsTable)
+          .values({
+            projectId, role: "assistant", content: answer, sources,
+            confidence, searchStrategy: searchStrategies.join(","),
+          })
+          .returning();
+
+        res.write(`data: ${JSON.stringify({ type: "done", message: msg, confidence })}\n\n`);
+      } catch (streamErr) {
+        req.log.error({ err: streamErr }, "Streaming LLM failed");
+        res.write(`data: ${JSON.stringify({ type: "error", error: "Failed to generate response" })}\n\n`);
+      }
+      res.end();
+      return;
+    }
+
+    ({ answer, confidence } = await askLLM(sysPrompt, buildContextBlock(usedChunks) + verifiedFactsBlock, question));
 
     const isNotFound = answer.includes("was not found in the project documents") || answer.includes("not found in the provided") || (confidence !== null && confidence <= 2);
 
@@ -650,7 +720,7 @@ FORMAT: Use clear structure. For tables, use markdown tables. For lists, use bul
 
       try {
         const reformulateResult = await openai.chat.completions.create({
-          model: "gpt-4o",
+          model: "gpt-4o-mini",
           messages: [
             {
               role: "system",

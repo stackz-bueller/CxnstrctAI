@@ -296,29 +296,96 @@ export default function ProjectDetailPage() {
     };
     setMessages((prev) => [...prev, tempUserMsg]);
 
+    const streamingMsgId = Date.now() + 1;
+
     try {
-      const res = await fetch(`${API_BASE}/api/projects/${projectId}/chat`, {
+      const res = await fetch(`${API_BASE}/api/projects/${projectId}/chat?stream=1`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "Accept": "text/event-stream" },
         body: JSON.stringify({ question: text }),
       });
       if (!res.ok) throw new Error("Chat request failed");
-      const data = await res.json();
-      const assistantMsg = { ...data.message, confidence: data.confidence ?? null };
-      setMessages((prev) => {
-        const withoutTemp = prev.filter((m) => m.id !== tempUserMsg.id);
-        return [...withoutTemp, { ...tempUserMsg, id: tempUserMsg.id }, assistantMsg];
-      });
+
+      const contentType = res.headers.get("content-type") || "";
+      if (contentType.includes("text/event-stream") && res.body) {
+        const streamingMsg: ChatMessage = {
+          id: streamingMsgId,
+          projectId,
+          role: "assistant",
+          content: "",
+          sources: [],
+          createdAt: new Date().toISOString(),
+        };
+        setMessages((prev) => [...prev, streamingMsg]);
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let accumulated = "";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
+
+          for (const line of lines) {
+            if (!line.startsWith("data: ")) continue;
+            try {
+              const event = JSON.parse(line.slice(6));
+              if (event.type === "token") {
+                accumulated += event.content;
+                setMessages((prev) =>
+                  prev.map((m) =>
+                    m.id === streamingMsgId ? { ...m, content: accumulated } : m
+                  )
+                );
+              } else if (event.type === "sources") {
+                setMessages((prev) =>
+                  prev.map((m) =>
+                    m.id === streamingMsgId ? { ...m, sources: event.sources } : m
+                  )
+                );
+              } else if (event.type === "done") {
+                setMessages((prev) =>
+                  prev.map((m) =>
+                    m.id === streamingMsgId
+                      ? { ...event.message, confidence: event.confidence ?? null }
+                      : m
+                  )
+                );
+              } else if (event.type === "error") {
+                setMessages((prev) =>
+                  prev.map((m) =>
+                    m.id === streamingMsgId
+                      ? { ...m, content: event.error || "Failed to get a response. Please try again." }
+                      : m
+                  )
+                );
+              }
+            } catch {}
+          }
+        }
+      } else {
+        const data = await res.json();
+        const assistantMsg = { ...data.message, confidence: data.confidence ?? null };
+        setMessages((prev) => {
+          const withoutTemp = prev.filter((m) => m.id !== tempUserMsg.id);
+          return [...withoutTemp, { ...tempUserMsg, id: tempUserMsg.id }, assistantMsg];
+        });
+      }
     } catch (e) {
       const errMsg: ChatMessage = {
-        id: Date.now() + 1,
+        id: Date.now() + 2,
         projectId,
         role: "assistant",
         content: "Failed to get a response. Please try again.",
         sources: [],
         createdAt: new Date().toISOString(),
       };
-      setMessages((prev) => [...prev, errMsg]);
+      setMessages((prev) => prev.filter((m) => m.id !== streamingMsgId).concat(errMsg));
     } finally {
       setChatLoading(false);
     }
