@@ -470,7 +470,7 @@ components:
   schemas:
     AuthUser:
       type: object
-      required: [id, email, firstName, lastName, profileImageUrl]
+      required: [id, email, firstName, lastName, profileImageUrl, role]
       properties:
         id:
           type: string
@@ -483,6 +483,10 @@ components:
           type: [string, 'null']
         profileImageUrl:
           type: [string, 'null']
+        role:
+          type: string
+          enum: [user, superuser]
+          default: user
     AuthUserEnvelope:
       type: object
       required: [user]

@@ -60,9 +60,12 @@ Provides project-scoped Q&A over indexed documents:
 - **Extraction Integrity System**: Verifies and auto-repairs incomplete construction extractions on server boot and document attachment.
 
 ## Authentication & Security
-- **Replit OIDC Auth**: Server-side OpenID Connect login via `openid-client`. Sessions stored in `sessions` DB table. Users stored in `users` DB table.
-- **Auth Middleware**: `authMiddleware` populates `req.user` from session cookie. `requireAuth` middleware gates all API routes except health and auth endpoints.
+- **Replit OIDC Auth**: Server-side OpenID Connect login via `openid-client`. Sessions stored in `sessions` DB table. Users stored in `users` DB table with `role` column (`user` or `superuser`).
+- **Auth Middleware**: `authMiddleware` populates `req.user` (including `role`) from session cookie. `requireAuth` middleware gates all API routes except health and auth endpoints.
 - **Router-level enforcement**: All OCR, project, cost, and document routes require authentication at the router mount level (`routes/index.ts`).
+- **User Allowlist**: `ALLOWED_USER_IDS` env var (comma-separated) restricts login to specific Replit user IDs. If empty/unset, all Replit users can log in.
+- **Superuser Role**: `SUPERUSER_IDS` env var (comma-separated) auto-assigns `superuser` role on login. Superusers see all projects; regular users see only their own.
+- **Project Ownership**: Projects have an `ownerId` column. `router.param("id")` middleware enforces ownership on all project sub-routes. Superusers bypass ownership checks.
 
 ## Cost Accounting
 - **`cost_events` table**: Tracks all AI API spend with model, token counts, estimated cost, category, and project association.

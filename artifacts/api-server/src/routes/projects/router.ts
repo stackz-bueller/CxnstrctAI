@@ -24,14 +24,43 @@ import { requireAuth } from "../../lib/require-auth";
 
 const router: IRouter = Router();
 
+function isSuperuser(req: import("express").Request): boolean {
+  return req.user?.role === "superuser";
+}
+
+async function getProjectIfAllowed(projectId: number, req: import("express").Request) {
+  const [project] = await db.select().from(projectsTable).where(eq(projectsTable.id, projectId));
+  if (!project) return null;
+  if (isSuperuser(req)) return project;
+  if (project.ownerId && project.ownerId !== req.user?.id) return undefined;
+  return project;
+}
+
+router.param("id", async (req, res, next, value) => {
+  if (req.method === "POST" && req.path === "/") { next(); return; }
+  const projectId = parseInt(value as string);
+  if (isNaN(projectId)) { next(); return; }
+  const project = await getProjectIfAllowed(projectId, req);
+  if (project === null) { res.status(404).json({ error: "Project not found" }); return; }
+  if (project === undefined) { res.status(403).json({ error: "Access denied" }); return; }
+  (req as any)._project = project;
+  next();
+});
+
 // ─── Projects CRUD ────────────────────────────────────────────────────────────
 
 router.get("/", async (req, res) => {
   try {
-    const rows = await db
-      .select()
-      .from(projectsTable)
-      .orderBy(desc(projectsTable.createdAt));
+    const query = db.select().from(projectsTable);
+    let rows;
+    if (isSuperuser(req)) {
+      rows = await query.orderBy(desc(projectsTable.createdAt));
+    } else {
+      const userId = req.user?.id;
+      rows = await query
+        .where(userId ? sql`${projectsTable.ownerId} = ${userId} OR ${projectsTable.ownerId} IS NULL` : sql`${projectsTable.ownerId} IS NULL`)
+        .orderBy(desc(projectsTable.createdAt));
+    }
     res.json({ projects: rows });
   } catch (err) {
     req.log.error({ err }, "Failed to list projects");
@@ -52,7 +81,7 @@ router.post("/", requireAuth, async (req, res) => {
   try {
     const [project] = await db
       .insert(projectsTable)
-      .values({ name: parsed.data.name, description: parsed.data.description ?? null })
+      .values({ name: parsed.data.name, description: parsed.data.description ?? null, ownerId: req.user!.id })
       .returning();
     res.status(201).json(project);
   } catch (err) {
@@ -65,8 +94,7 @@ router.get("/:id", async (req, res) => {
   const id = parseInt(req.params.id as string);
   if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
   try {
-    const [project] = await db.select().from(projectsTable).where(eq(projectsTable.id, id));
-    if (!project) { res.status(404).json({ error: "Project not found" }); return; }
+    const project = (req as any)._project;
     const documents = await db
       .select()
       .from(projectDocumentsTable)
@@ -125,7 +153,6 @@ router.patch("/:id", requireAuth, async (req, res) => {
       .set({ ...parsed.data, updatedAt: new Date() })
       .where(eq(projectsTable.id, id))
       .returning();
-    if (!updated) { res.status(404).json({ error: "Project not found" }); return; }
     res.json(updated);
   } catch (err) {
     req.log.error({ err }, "Failed to update project");
@@ -140,8 +167,7 @@ router.delete("/:id", requireAuth, async (req, res) => {
     await db.delete(documentChunksTable).where(eq(documentChunksTable.projectId, id));
     await db.delete(projectDocumentsTable).where(eq(projectDocumentsTable.projectId, id));
     await db.delete(projectChatsTable).where(eq(projectChatsTable.projectId, id));
-    const [deleted] = await db.delete(projectsTable).where(eq(projectsTable.id, id)).returning();
-    if (!deleted) { res.status(404).json({ error: "Project not found" }); return; }
+    await db.delete(projectsTable).where(eq(projectsTable.id, id)).returning();
     res.json({ success: true });
   } catch (err) {
     req.log.error({ err }, "Failed to delete project");

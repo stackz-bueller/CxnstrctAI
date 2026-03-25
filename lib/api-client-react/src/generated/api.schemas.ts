@@ -5,6 +5,13 @@
  * OCR Information Extraction API - Schema-anchored extraction pipeline
  * OpenAPI spec version: 0.1.0
  */
+export type AuthUserRole = (typeof AuthUserRole)[keyof typeof AuthUserRole];
+
+export const AuthUserRole = {
+  user: "user",
+  superuser: "superuser",
+} as const;
+
 export interface AuthUser {
   id: string;
   /** @nullable */
@@ -15,6 +22,7 @@ export interface AuthUser {
   lastName: string | null;
   /** @nullable */
   profileImageUrl: string | null;
+  role: AuthUserRole;
 }
 
 export interface AuthUserEnvelope {

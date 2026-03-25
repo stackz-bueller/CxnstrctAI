@@ -10,6 +10,8 @@ import * as zod from "zod";
 /**
  * @summary Get the currently authenticated user
  */
+export const getCurrentAuthUserResponseUserOneRoleDefault = `user`;
+
 export const GetCurrentAuthUserResponse = zod.object({
   user: zod.union([
     zod.object({
@@ -18,6 +20,9 @@ export const GetCurrentAuthUserResponse = zod.object({
       firstName: zod.string().nullable(),
       lastName: zod.string().nullable(),
       profileImageUrl: zod.string().nullable(),
+      role: zod
+        .enum(["user", "superuser"])
+        .default(getCurrentAuthUserResponseUserOneRoleDefault),
     }),
     zod.null(),
   ]),

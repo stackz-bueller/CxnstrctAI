@@ -3,6 +3,7 @@ export {
   type ApiError,
   type AuthUser,
   type AuthUserEnvelope,
+  type AuthUserRole,
   type BeginBrowserLoginParams,
   type ConstructionCallout,
   type ConstructionLegend,

@@ -9,6 +9,7 @@
 export * from "./apiError";
 export * from "./authUser";
 export * from "./authUserEnvelope";
+export * from "./authUserRole";
 export * from "./beginBrowserLoginParams";
 export * from "./constructionCallout";
 export * from "./constructionLegend";
