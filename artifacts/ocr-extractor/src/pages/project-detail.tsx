@@ -297,6 +297,9 @@ export default function ProjectDetailPage() {
     if (!files || files.length === 0) return;
     setUploading(true);
 
+    type UploadedDoc = { id: number; pipeline: string; fileName: string };
+    const uploaded: UploadedDoc[] = [];
+
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       setUploadProgress(`Uploading ${file.name} (${i + 1}/${files.length})…`);
@@ -345,16 +348,41 @@ export default function ProjectDetailPage() {
         if (!addRes.ok) {
           const errData = await addRes.json().catch(() => ({}));
           alert(`Failed to add ${file.name} to project: ${(errData as { error?: string }).error || addRes.statusText}`);
+          continue;
         }
+
+        uploaded.push({ id: result.id, pipeline: result.pipeline, fileName: file.name });
       } catch (e) {
         alert(`Error uploading ${file.name}: ${e instanceof Error ? e.message : "Unknown error"}`);
       }
     }
 
+    await fetchProject();
+
+    if (uploaded.length > 0) {
+      setUploadProgress(`Starting processing for ${uploaded.length} file${uploaded.length > 1 ? "s" : ""}…`);
+
+      for (const doc of uploaded) {
+        try {
+          const procRes = await fetch(`${API_BASE}/api/smart-upload/${doc.id}/process`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ pipeline: doc.pipeline }),
+          });
+          if (!procRes.ok) {
+            const errData = await procRes.json().catch(() => ({}));
+            alert(`Failed to start processing ${doc.fileName}: ${(errData as { error?: string }).error || procRes.statusText}`);
+          }
+        } catch (e) {
+          alert(`Error starting processing ${doc.fileName}: ${e instanceof Error ? e.message : "Unknown error"}`);
+        }
+      }
+
+      setPollingActive(true);
+    }
+
     setUploading(false);
     setUploadProgress(null);
-    setPollingActive(true);
-    await fetchProject();
     if (fileInputRef.current) fileInputRef.current.value = "";
   }
 
