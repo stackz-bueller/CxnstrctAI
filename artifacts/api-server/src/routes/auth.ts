@@ -17,6 +17,18 @@ import {
 
 const OIDC_COOKIE_TTL = 10 * 60 * 1000;
 
+function getAllowedUserIds(): Set<string> | null {
+  const raw = process.env.ALLOWED_USER_IDS;
+  if (!raw || raw.trim() === "") return null;
+  return new Set(raw.split(",").map((s) => s.trim()).filter(Boolean));
+}
+
+function getSuperuserIds(): Set<string> {
+  const raw = process.env.SUPERUSER_IDS;
+  if (!raw || raw.trim() === "") return new Set();
+  return new Set(raw.split(",").map((s) => s.trim()).filter(Boolean));
+}
+
 const router: IRouter = Router();
 
 function getOrigin(req: Request): string {
@@ -54,14 +66,19 @@ function getSafeReturnTo(value: unknown): string {
 }
 
 async function upsertUser(claims: Record<string, unknown>) {
+  const userId = claims.sub as string;
+  const superuserIds = getSuperuserIds();
+  const role = superuserIds.has(userId) ? "superuser" : "user";
+
   const userData = {
-    id: claims.sub as string,
+    id: userId,
     email: (claims.email as string) || null,
     firstName: (claims.first_name as string) || null,
     lastName: (claims.last_name as string) || null,
     profileImageUrl: (claims.profile_image_url || claims.picture) as
       | string
       | null,
+    role,
   };
 
   const [user] = await db
@@ -160,6 +177,17 @@ router.get("/callback", async (req: Request, res: Response) => {
     return;
   }
 
+  const allowedIds = getAllowedUserIds();
+  if (allowedIds && !allowedIds.has(claims.sub)) {
+    res.status(403).send(
+      "<!DOCTYPE html><html><body style='font-family:system-ui;text-align:center;padding:80px'>" +
+      "<h1>Access Denied</h1><p>Your account is not authorized to use this application.</p>" +
+      "<p style='color:#888'>User ID: " + claims.sub + "</p>" +
+      "<a href='/'>Back</a></body></html>"
+    );
+    return;
+  }
+
   const dbUser = await upsertUser(
     claims as unknown as Record<string, unknown>,
   );
@@ -234,6 +262,12 @@ router.post(
       const claims = tokens.claims();
       if (!claims) {
         res.status(401).json({ error: "No claims in ID token" });
+        return;
+      }
+
+      const mobileAllowedIds = getAllowedUserIds();
+      if (mobileAllowedIds && !mobileAllowedIds.has(claims.sub)) {
+        res.status(403).json({ error: "Your account is not authorized to use this application" });
         return;
       }
 
