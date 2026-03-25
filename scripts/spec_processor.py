@@ -361,7 +361,6 @@ def main():
 
     try:
         result = process_spec(pdf_path, client)
-        print(json.dumps(result))
     except Exception as e:
         print(json.dumps({"error": str(e)}))
         sys.exit(1)
