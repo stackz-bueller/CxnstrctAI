@@ -1,5 +1,5 @@
 import { db } from "@workspace/db";
-import { constructionExtractionsTable, projectDocumentsTable, documentChunksTable } from "@workspace/db";
+import { constructionExtractionsTable, projectDocumentsTable, documentChunksTable, constructionPageResultSchema } from "@workspace/db";
 import { eq, and, sql } from "drizzle-orm";
 import { spawn } from "child_process";
 import path from "path";
@@ -159,7 +159,14 @@ export async function repairIncompleteExtraction(extractionId: number): Promise<
       let lineBuffer = "";
 
       const savePage = async (pageData: unknown) => {
-        const pg = pageData as { page_number: number };
+        const validation = constructionPageResultSchema.safeParse(pageData);
+        let pg: { page_number: number };
+        if (validation.success) {
+          pg = validation.data;
+        } else {
+          logger.warn({ errors: validation.error.issues.map((i: any) => `${i.path.join(".")}: ${i.message}`).slice(0, 5), page: (pageData as { page_number?: number })?.page_number }, "Repair page schema validation warning");
+          pg = pageData as { page_number: number };
+        }
         pagesMap.set(pg.page_number, pg);
         const allPages = Array.from(pagesMap.values()).sort(
           (a, b) => (a as { page_number: number }).page_number - (b as { page_number: number }).page_number

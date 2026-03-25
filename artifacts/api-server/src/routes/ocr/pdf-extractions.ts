@@ -5,7 +5,7 @@ import path from "path";
 import fs from "fs";
 import os from "os";
 import { db } from "@workspace/db";
-import { constructionExtractionsTable, projectDocumentsTable } from "@workspace/db/schema";
+import { constructionExtractionsTable, projectDocumentsTable, constructionPageResultSchema } from "@workspace/db/schema";
 import { GetPdfExtractionParams } from "@workspace/api-zod";
 import { eq } from "drizzle-orm";
 import { indexProjectDocument } from "../projects/indexer.js";
@@ -158,7 +158,14 @@ router.post("/upload", upload.single("file"), async (req, res) => {
         let lineBuffer = "";
 
         const savePage = async (pageData: unknown) => {
-          const pg = pageData as { page_number: number };
+          const validation = constructionPageResultSchema.safeParse(pageData);
+          let pg: { page_number: number };
+          if (validation.success) {
+            pg = validation.data;
+          } else {
+            req.log.warn({ errors: validation.error.issues.map((i: any) => `${i.path.join(".")}: ${i.message}`).slice(0, 5), page: (pageData as { page_number?: number })?.page_number }, "Page schema validation warning — saving raw data");
+            pg = pageData as { page_number: number };
+          }
           pagesMap.set(pg.page_number, pg);
           const allPages = Array.from(pagesMap.values()).sort(
             (a, b) => (a as { page_number: number }).page_number - (b as { page_number: number }).page_number,
@@ -172,7 +179,7 @@ router.post("/upload", upload.single("file"), async (req, res) => {
               updatedAt: new Date(),
             })
             .where(eq(constructionExtractionsTable.id, extraction.id));
-          req.log.info({ extractionId: extraction.id, page: pg.page_number, saved: pagesMap.size, total: totalPages }, "Saved page to DB");
+          req.log.info({ extractionId: extraction.id, page: pg.page_number, saved: pagesMap.size, total: totalPages, schemaValid: validation.success }, "Saved page to DB");
         };
 
         proc.stdout.on("data", (chunk: Buffer) => {
@@ -362,7 +369,14 @@ router.post("/:id/reprocess", async (req, res) => {
         let lineBuffer = "";
 
         const savePage = async (pageData: unknown) => {
-          const pg = pageData as { page_number: number };
+          const validation = constructionPageResultSchema.safeParse(pageData);
+          let pg: { page_number: number };
+          if (validation.success) {
+            pg = validation.data;
+          } else {
+            req.log.warn({ errors: validation.error.issues.map((i: any) => `${i.path.join(".")}: ${i.message}`).slice(0, 5), page: (pageData as { page_number?: number })?.page_number }, "Page schema validation warning — saving raw data");
+            pg = pageData as { page_number: number };
+          }
           pagesMap.set(pg.page_number, pg);
           pagesSaved = pagesMap.size;
           const allPages = Array.from(pagesMap.values()).sort(
@@ -377,7 +391,7 @@ router.post("/:id/reprocess", async (req, res) => {
               updatedAt: new Date(),
             })
             .where(eq(constructionExtractionsTable.id, id));
-          req.log.info({ extractionId: id, page: pg.page_number, saved: pagesSaved, total: totalPages }, "Saved page to DB");
+          req.log.info({ extractionId: id, page: pg.page_number, saved: pagesSaved, total: totalPages, schemaValid: validation.success }, "Saved page to DB");
         };
 
         proc.stdout.on("data", (chunk: Buffer) => {
