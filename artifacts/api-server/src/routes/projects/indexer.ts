@@ -10,7 +10,7 @@ import {
   type ConstructionPageResult,
   type FinancialDocument,
 } from "@workspace/db";
-import { eq, and, sql } from "drizzle-orm";
+import { eq, and, sql, type SQL } from "drizzle-orm";
 import { embed } from "../../lib/embedder.js";
 
 const MAX_CHUNK_CHARS = 1500;
@@ -179,18 +179,18 @@ async function insertBatch(
   try {
     const texts = batch.map((c) => c.content);
     const vectors = await embed(texts);
-    const cases: string[] = [];
-    const ids: number[] = [];
+    const whenClauses: SQL[] = [];
+    const validIds: number[] = [];
     for (let i = 0; i < inserted.length; i++) {
       const vec = vectors[i];
       if (!vec || vec.some((v) => !Number.isFinite(v))) continue;
-      ids.push(inserted[i].id);
-      cases.push(`WHEN ${inserted[i].id} THEN '[${vec.join(",")}]'::vector`);
+      validIds.push(inserted[i].id);
+      whenClauses.push(sql`WHEN ${inserted[i].id} THEN ${sql.raw(`'[${vec.join(",")}]'::vector`)}`);
     }
-    if (cases.length > 0) {
-      await db.execute(sql.raw(
-        `UPDATE document_chunks SET embedding = CASE id ${cases.join(" ")} END WHERE id IN (${ids.join(",")})`
-      ));
+    if (whenClauses.length > 0) {
+      await db.execute(
+        sql`UPDATE document_chunks SET embedding = CASE id ${sql.join(whenClauses, sql` `)} END WHERE id IN (${sql.join(validIds.map((id) => sql`${id}`), sql`, `)})`
+      );
     }
   } catch (embErr) {
     console.error("Embedding generation failed for batch, storing without vectors:", embErr);
