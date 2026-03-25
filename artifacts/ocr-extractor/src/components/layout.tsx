@@ -1,6 +1,6 @@
 import { ReactNode } from "react";
 import { Link, useLocation } from "wouter";
-import { HardHat, Plus, MessageSquare, DollarSign, LogOut } from "lucide-react";
+import { HardHat, Plus, MessageSquare, Shield, LogOut } from "lucide-react";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
 import { useAuth } from "@workspace/replit-auth-web";
@@ -62,19 +62,21 @@ export function Layout({ children }: { children: ReactNode }) {
             <p className="text-[11px] font-medium text-muted-foreground/60 uppercase tracking-wider px-3 py-2">Projects</p>
           </div>
 
-          <div className="px-3 pb-1">
-            <Link href="/costs">
-              <div className={cn(
-                "flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-all cursor-pointer",
-                location === "/costs"
-                  ? "bg-primary/10 text-primary font-medium"
-                  : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
-              )}>
-                <DollarSign className="size-4" />
-                Cost Monitor
-              </div>
-            </Link>
-          </div>
+          {user?.role === "superuser" && (
+            <div className="px-3 pb-1">
+              <Link href="/admin">
+                <div className={cn(
+                  "flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-all cursor-pointer",
+                  location === "/admin"
+                    ? "bg-primary/10 text-primary font-medium"
+                    : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                )}>
+                  <Shield className="size-4" />
+                  Admin
+                </div>
+              </Link>
+            </div>
+          )}
 
           <div className="p-3 mt-auto border-t border-sidebar-border">
             <div className="flex items-center justify-between px-2 py-1.5">

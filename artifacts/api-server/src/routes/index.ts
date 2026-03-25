@@ -9,6 +9,7 @@ import financialExtractionsRouter from "./ocr/financial-extractions";
 import smartUploadRouter from "./ocr/smart-upload";
 import projectsRouter from "./projects/router";
 import costsRouter from "./costs";
+import adminRouter from "./admin";
 import { requireAuth } from "../lib/require-auth";
 
 const router: IRouter = Router();
@@ -24,5 +25,6 @@ router.use("/financial-extractions", requireAuth, financialExtractionsRouter);
 router.use("/smart-upload", requireAuth, smartUploadRouter);
 router.use("/projects", requireAuth, projectsRouter);
 router.use("/costs", requireAuth, costsRouter);
+router.use("/admin", requireAuth, adminRouter);
 
 export default router;

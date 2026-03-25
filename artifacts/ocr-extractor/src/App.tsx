@@ -7,7 +7,7 @@ import { useAuth } from "@workspace/replit-auth-web";
 import { Layout } from "@/components/layout";
 import ProjectsPage from "@/pages/projects";
 import ProjectDetailPage from "@/pages/project-detail";
-import CostsPage from "@/pages/costs";
+import AdminPage from "@/pages/admin";
 import NotFound from "@/pages/not-found";
 
 const queryClient = new QueryClient();
@@ -57,7 +57,7 @@ function AuthenticatedRouter() {
         <Route path="/" component={ProjectsPage} />
         <Route path="/projects/:id" component={ProjectDetailPage} />
         <Route path="/projects">{() => <Redirect to="/" />}</Route>
-        <Route path="/costs" component={CostsPage} />
+        <Route path="/admin" component={AdminPage} />
         <Route component={NotFound} />
       </Switch>
     </Layout>
