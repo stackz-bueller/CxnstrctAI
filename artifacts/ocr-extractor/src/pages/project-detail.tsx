@@ -37,6 +37,7 @@ import {
   ArrowLeft,
   ArrowRight,
   History,
+  Upload,
 } from "lucide-react";
 
 const API_BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -156,6 +157,9 @@ export default function ProjectDetailPage() {
 
   const [pollingActive, setPollingActive] = useState(false);
   const [reprocessing, setReprocessing] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [browsingDocId, setBrowsingDocId] = useState<number | null>(null);
   const [browsingDocName, setBrowsingDocName] = useState("");
@@ -287,6 +291,71 @@ export default function ProjectDetailPage() {
     } finally {
       setReprocessing(false);
     }
+  }
+
+  async function uploadFiles(files: FileList | null) {
+    if (!files || files.length === 0) return;
+    setUploading(true);
+
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      setUploadProgress(`Uploading ${file.name} (${i + 1}/${files.length})…`);
+
+      try {
+        const formData = new FormData();
+        formData.append("file", file);
+
+        const uploadRes = await fetch(`${API_BASE}/api/smart-upload`, {
+          method: "POST",
+          body: formData,
+        });
+
+        if (!uploadRes.ok) {
+          const errData = await uploadRes.json().catch(() => ({}));
+          alert(`Failed to upload ${file.name}: ${(errData as { error?: string }).error || uploadRes.statusText}`);
+          continue;
+        }
+
+        const result = await uploadRes.json() as {
+          detectedType: string;
+          pipeline: string;
+          id: number | null;
+        };
+
+        if (!result.id) {
+          alert(`${file.name}: Detected as ${result.detectedType} but no extraction was created. Try uploading as a specific type.`);
+          continue;
+        }
+
+        const typeMap: Record<string, string> = {
+          "pdf-extractions": "construction",
+          "spec-extractions": "spec",
+          "financial-extractions": "financial",
+        };
+        const docType = typeMap[result.pipeline] || "ocr";
+
+        setUploadProgress(`Adding ${file.name} to project…`);
+
+        const addRes = await fetch(`${API_BASE}/api/projects/${projectId}/documents`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ documentType: docType, documentId: result.id }),
+        });
+
+        if (!addRes.ok) {
+          const errData = await addRes.json().catch(() => ({}));
+          alert(`Failed to add ${file.name} to project: ${(errData as { error?: string }).error || addRes.statusText}`);
+        }
+      } catch (e) {
+        alert(`Error uploading ${file.name}: ${e instanceof Error ? e.message : "Unknown error"}`);
+      }
+    }
+
+    setUploading(false);
+    setUploadProgress(null);
+    setPollingActive(true);
+    await fetchProject();
+    if (fileInputRef.current) fileInputRef.current.value = "";
   }
 
   async function reindexDocument(docId: number) {
@@ -593,6 +662,22 @@ export default function ProjectDetailPage() {
                   </button>
                 )}
                 <button
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={uploading}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500/20 transition-colors text-xs font-medium disabled:opacity-50"
+                >
+                  {uploading ? <Loader2 className="size-3.5 animate-spin" /> : <Upload className="size-3.5" />}
+                  Upload
+                </button>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".pdf"
+                  multiple
+                  className="hidden"
+                  onChange={(e) => uploadFiles(e.target.files)}
+                />
+                <button
                   onClick={() => { setShowAddDoc((v) => !v); if (!showAddDoc) loadAvailableDocs(); }}
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary/10 text-primary hover:bg-primary/20 transition-colors text-xs font-medium"
                 >
@@ -648,10 +733,23 @@ export default function ProjectDetailPage() {
               )}
             </AnimatePresence>
 
+            {uploadProgress && (
+              <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 text-xs font-medium">
+                <Loader2 className="size-3.5 animate-spin shrink-0" />
+                {uploadProgress}
+              </div>
+            )}
+
             {project.documents.length === 0 ? (
-              <div className="text-center py-6 text-muted-foreground">
-                <FileText className="size-8 mx-auto mb-2 opacity-30" />
-                <p className="text-xs">No documents yet. Add extracted specs, drawings, or financial docs to train the AI.</p>
+              <div
+                className="text-center py-8 text-muted-foreground border-2 border-dashed border-border rounded-lg hover:border-emerald-400 hover:bg-emerald-500/5 transition-colors cursor-pointer"
+                onClick={() => fileInputRef.current?.click()}
+                onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                onDrop={(e) => { e.preventDefault(); e.stopPropagation(); uploadFiles(e.dataTransfer.files); }}
+              >
+                <Upload className="size-8 mx-auto mb-2 opacity-40" />
+                <p className="text-sm font-medium">Drop PDF files here or click to upload</p>
+                <p className="text-xs mt-1">Construction plans, specs, and financial documents are auto-detected</p>
               </div>
             ) : (
               <div className="space-y-2">
