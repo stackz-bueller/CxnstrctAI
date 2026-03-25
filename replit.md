@@ -32,7 +32,8 @@ A multi-stage process for engineering documents:
 - Applies Tesseract OCR for targeted extraction.
 - Employs GPT-4o Vision (full-page and 3x3 tiled) for structured data.
 - Includes table verification, exhaustive merge of all extraction results, and a quality gate for review.
-- Extracts PE stamp data and detects voided pages, marking them appropriately.
+- Dedicated PE seal extraction pass: multi-crop (3 regions) targeting right-edge and bottom-edge of drawings to capture Professional Engineer stamps, license numbers, and firm info.
+- Detects voided pages, marking them appropriately.
 - Scripted via `scripts/pdf_processor.py`.
 
 ### Specification Extraction Pipeline
@@ -45,7 +46,7 @@ Optimized for CSI-format PDFs:
 ## Project AI Agents (RAG Sidecar)
 Provides project-scoped Q&A over indexed documents:
 - **Indexing**: Documents are chunked, embedded using `all-MiniLM-L6-v2` ONNX model, and stored in PostgreSQL with `pgvector`.
-- **Hybrid Search**: Combines vector, full-text (min 2-char words for abbreviations like PE, LF, SF), and identifier boost searches with Reciprocal Rank Fusion (300-char dedup keys, max 5 chunks per section). Construction synonym expansion. Reranking with score threshold ≥2, up to 20 chunks to LLM. 3000-token answer limit, 8 sources with 500-char excerpts. Revision history and legends indexed as dedicated chunks.
+- **Hybrid Search**: Combines vector, full-text (min 2-char words for abbreviations like PE, LF, SF), and identifier boost searches with Reciprocal Rank Fusion (300-char dedup keys, max 5 chunks per section). Construction synonym expansion. Reranking with score threshold ≥2, up to 20 chunks to LLM. 3000-token answer limit, 8 sources with 500-char excerpts. Revision history, legends, PE stamps, and firm info indexed as dedicated chunks.
 - **AI Reranking**: GPT-4o scores retrieved chunks for relevance.
 - **Contextual AI**: Uses top reranked chunks with GPT-4o for answer generation.
 - **Safety**: Employs strict system prompts, exact quoting, source citation, and conflict flagging to prevent hallucination.

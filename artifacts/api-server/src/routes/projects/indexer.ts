@@ -306,6 +306,37 @@ async function indexConstruction(
         .join("\n");
       pending.push(...makeChunks(`${label} – Legend:\n${legendText}`, label));
     }
+    const peStamps = (page as Record<string, unknown>).pe_stamps as Array<{
+      name?: string; license_number?: string; state?: string;
+      expiration?: string; discipline?: string; firm?: string;
+    }> | undefined;
+    if (peStamps && peStamps.length > 0) {
+      const peText = peStamps
+        .map((s) => {
+          const parts: string[] = [];
+          if (s.name) parts.push(`Professional Engineer: ${s.name}`);
+          if (s.license_number) parts.push(`License No. ${s.license_number}`);
+          if (s.state) parts.push(`State: ${s.state}`);
+          if (s.expiration) parts.push(`Expiration: ${s.expiration}`);
+          if (s.discipline) parts.push(`Discipline: ${s.discipline}`);
+          if (s.firm) parts.push(`Firm: ${s.firm}`);
+          return parts.join(" | ");
+        })
+        .join("\n");
+      pending.push(...makeChunks(`${label} – PE Stamps/Seals:\n${peText}`, label));
+    }
+    const firmInfo = (page as Record<string, unknown>).firm_info as {
+      name?: string; address?: string; phone?: string;
+    } | undefined;
+    if (firmInfo && (firmInfo.name || firmInfo.address || firmInfo.phone)) {
+      const firmParts: string[] = [];
+      if (firmInfo.name) firmParts.push(`Engineering Firm: ${firmInfo.name}`);
+      if (firmInfo.address) firmParts.push(`Address: ${firmInfo.address}`);
+      if (firmInfo.phone) firmParts.push(`Phone: ${firmInfo.phone}`);
+      if (firmParts.length > 0) {
+        pending.push(...makeChunks(`${label} – Firm Info:\n${firmParts.join("\n")}`, label));
+      }
+    }
     const tables = page.tables;
     if (tables && tables.length > 0) {
       for (const table of tables) {

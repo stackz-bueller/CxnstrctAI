@@ -320,6 +320,142 @@ def vision_extract_fullpage(client: OpenAI, img: Image.Image) -> dict:
     return empty
 
 
+PE_SEAL_CROP_BOXES = [
+    (0.70, 0.10, 1.0, 0.60),
+    (0.70, 0.55, 1.0, 0.85),
+    (0.0, 0.80, 0.40, 1.0),
+]
+
+PE_SEAL_PROMPT = """You are a construction document analyst. This image shows the RIGHT EDGE of a construction drawing page.
+Look carefully for Professional Engineer (PE) seals/stamps. These are typically circular or rectangular stamps containing:
+- A Professional Engineer's name
+- A PE license/registration number (format varies: PE012345, PE012345E, etc.)
+- The state of registration (e.g., "Commonwealth of Pennsylvania")
+- An expiration date
+- Sometimes a signature
+
+Also look for Licensed Surveyor (LS/SU) seals with similar information.
+
+Return a JSON object:
+{
+  "pe_stamps": [
+    {
+      "name": "Full Name As Written",
+      "license_number": "PE012345",
+      "state": "Pennsylvania",
+      "expiration": "09/30/2025",
+      "discipline": "Structural/Civil/Electrical/Surveyor/etc",
+      "firm": "Company Name if visible"
+    }
+  ],
+  "firm_info": {
+    "name": "Firm name if visible",
+    "address": "Address if visible",
+    "phone": "Phone if visible"
+  }
+}
+
+If NO PE seals are found, return: {"pe_stamps": [], "firm_info": null}
+Be THOROUGH — PE stamps may be faint, small, or partially obscured. Read every character carefully.
+License numbers are critical — do not guess. If unclear, use "?" for uncertain characters."""
+
+
+def _extract_pe_from_crop(client: OpenAI, page: Image.Image, crop_box: tuple) -> dict:
+    w, h = page.size
+    left = int(w * crop_box[0])
+    top = int(h * crop_box[1])
+    right = int(w * crop_box[2])
+    bottom = int(h * crop_box[3])
+    crop = page.crop((left, top, right, bottom))
+
+    b64 = pil_to_base64(crop, max_width=1600)
+    del crop
+
+    empty = {"pe_stamps": [], "firm_info": None}
+    for attempt in range(1, VISION_MAX_RETRIES + 1):
+        try:
+            response = client.chat.completions.create(
+                model="gpt-4o",
+                max_tokens=2048,
+                messages=[{
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": PE_SEAL_PROMPT},
+                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}", "detail": "high"}}
+                    ]
+                }]
+            )
+            content = response.choices[0].message.content or ""
+            json_match = re.search(r'\{[\s\S]*\}', content)
+            if json_match:
+                result = json.loads(json_match.group())
+                if "pe_stamps" not in result:
+                    result["pe_stamps"] = []
+                return result
+        except Exception as e:
+            print(f"Vision PE seal error (attempt {attempt}/{VISION_MAX_RETRIES}): {e}", file=sys.stderr)
+            if attempt < VISION_MAX_RETRIES:
+                time.sleep(VISION_RETRY_DELAY * attempt)
+    return empty
+
+
+def vision_extract_pe_stamp(client: OpenAI, page: Image.Image) -> dict:
+    all_stamps = []
+    best_firm = None
+    seen_names = set()
+
+    for crop_box in PE_SEAL_CROP_BOXES:
+        result = _extract_pe_from_crop(client, page, crop_box)
+        for stamp in result.get("pe_stamps", []):
+            name = (stamp.get("name") or "").strip().upper()
+            if name and name not in seen_names:
+                seen_names.add(name)
+                all_stamps.append(stamp)
+        fi = result.get("firm_info")
+        if fi and fi.get("name") and not best_firm:
+            best_firm = fi
+
+    return {"pe_stamps": all_stamps, "firm_info": best_firm}
+
+
+def format_pe_stamps_text(pe_data: dict) -> str:
+    stamps = pe_data.get("pe_stamps", [])
+    if not stamps:
+        return ""
+    lines = ["\n--- PROFESSIONAL ENGINEER SEALS/STAMPS ---"]
+    for s in stamps:
+        name = s.get("name", "Unknown")
+        lic = s.get("license_number", "")
+        state = s.get("state", "")
+        exp = s.get("expiration", "")
+        disc = s.get("discipline", "")
+        firm = s.get("firm", "")
+        parts = [f"PE: {name}"]
+        if lic:
+            parts.append(f"License No. {lic}")
+        if state:
+            parts.append(f"State: {state}")
+        if exp:
+            parts.append(f"Exp: {exp}")
+        if disc:
+            parts.append(f"Discipline: {disc}")
+        if firm:
+            parts.append(f"Firm: {firm}")
+        lines.append(" | ".join(parts))
+
+    firm_info = pe_data.get("firm_info")
+    if firm_info and firm_info.get("name"):
+        fi_parts = [f"Engineering Firm: {firm_info['name']}"]
+        if firm_info.get("address"):
+            fi_parts.append(firm_info["address"])
+        if firm_info.get("phone"):
+            fi_parts.append(firm_info["phone"])
+        lines.append(" | ".join(fi_parts))
+
+    lines.append("--- END PE SEALS ---")
+    return "\n".join(lines)
+
+
 def vision_extract_tile(client: OpenAI, img: Image.Image, tile_name: str) -> dict:
     b64 = pil_to_base64(img, max_width=VISION_TILE_MAX_PX)
     empty = {"general_notes": [], "tables": [], "callouts": [], "legends": [], "all_text": ""}
@@ -762,6 +898,15 @@ def process_page(page_num: int, pdf_path: str, client: OpenAI) -> dict:
     fullpage_text_len = len((fullpage_vision.get("all_text") or "").strip())
     print(f"  Full-page vision: {fullpage_text_len} chars, {count_table_rows(fullpage_vision)} table rows", file=sys.stderr)
 
+    print(f"  Running PE seal extraction (right-edge crop)...", file=sys.stderr)
+    pe_seal_data = vision_extract_pe_stamp(client, page)
+    pe_stamp_count = len(pe_seal_data.get("pe_stamps", []))
+    if pe_stamp_count > 0:
+        stamp_names = [s.get("name", "?") for s in pe_seal_data["pe_stamps"]]
+        print(f"  PE seals found: {', '.join(stamp_names)}", file=sys.stderr)
+    else:
+        print(f"  No PE seals detected on this page", file=sys.stderr)
+
     print(f"  Running 3x3 tiled vision (9 tiles, 15% overlap)...", file=sys.stderr)
     tiles = tile_image_3x3(page)
     tile_results = []
@@ -808,6 +953,12 @@ def process_page(page_num: int, pdf_path: str, client: OpenAI) -> dict:
 
     final = merge_results(ocr_data, fullpage_vision, tile_results)
 
+    pe_text = format_pe_stamps_text(pe_seal_data)
+    if pe_text:
+        final["all_text"] = final.get("all_text", "") + "\n" + pe_text
+    final["pe_stamps"] = pe_seal_data.get("pe_stamps", [])
+    final["firm_info"] = pe_seal_data.get("firm_info")
+
     if final.get("title_block") is None:
         final["title_block"] = {k: None for k in ["project_name","drawing_title","sheet_number","revision","date","drawn_by","scale","confidence"]}
 
@@ -824,7 +975,7 @@ def process_page(page_num: int, pdf_path: str, client: OpenAI) -> dict:
     if gap_warnings:
         print(f"  ⚠ SEQUENCE GAPS: {'; '.join(gap_warnings)}", file=sys.stderr)
 
-    extraction_method = "ocr+vision_fullpage+vision_3x3"
+    extraction_method = "ocr+vision_fullpage+pe_seal+vision_3x3"
     if has_significant_tables:
         extraction_method += "+table_verification"
 
@@ -837,6 +988,8 @@ def process_page(page_num: int, pdf_path: str, client: OpenAI) -> dict:
         "tables": final.get("tables") or [],
         "callouts": final.get("callouts") or [],
         "legends": final.get("legends") or [],
+        "pe_stamps": final.get("pe_stamps") or [],
+        "firm_info": final.get("firm_info"),
         "all_text": final.get("all_text") or "",
         "ocr_confidence": ocr_data.get("ocr_confidence", 0.0),
         "voided": is_voided,

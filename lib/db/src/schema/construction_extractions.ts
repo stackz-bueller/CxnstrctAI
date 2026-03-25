@@ -36,6 +36,21 @@ export const constructionTableSchema = z.object({
   raw_text: z.string().optional(),
 });
 
+export const constructionPeStampSchema = z.object({
+  name: z.string().optional(),
+  license_number: z.string().optional(),
+  state: z.string().optional(),
+  expiration: z.string().nullable().optional(),
+  discipline: z.string().optional(),
+  firm: z.string().optional(),
+});
+
+export const constructionFirmInfoSchema = z.object({
+  name: z.string().optional(),
+  address: z.string().optional(),
+  phone: z.string().optional(),
+}).nullable().optional();
+
 export const constructionPageResultSchema = z.object({
   page_number: z.number(),
   extraction_method: z.string(),
@@ -45,6 +60,8 @@ export const constructionPageResultSchema = z.object({
   tables: z.array(constructionTableSchema).optional().default([]),
   callouts: z.array(constructionCalloutSchema),
   legends: z.array(constructionLegendSchema),
+  pe_stamps: z.array(constructionPeStampSchema).optional().default([]),
+  firm_info: constructionFirmInfoSchema,
   all_text: z.string(),
   ocr_confidence: z.number(),
   voided: z.boolean().optional().default(false),
